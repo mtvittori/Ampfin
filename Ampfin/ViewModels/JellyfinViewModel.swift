@@ -43,7 +43,7 @@ class JellyfinViewModel: ObservableObject {
         
         // Carica le credenziali e, se presenti, avvia il setup
         loadCredentials()
-        if isLoggedIn {
+               if isLoggedIn {
             setupAuthenticatedSession()
         }
     }

@@ -59,15 +59,24 @@ struct AlbumTracksListView: View {
     
     private func trackRow(track: AudioItem, index: Int) -> some View {
         HStack {
-            Text("\(index + 1)").font(.callout).foregroundColor(.secondary).frame(minWidth: 25, alignment: .trailing)
+            Text("\(index + 1)").font(.callout).foregroundColor(.secondary).frame(minWidth: 32, alignment: .trailing)
             Text(track.Name).font(.body)
+            if track.isLossless {
+                Label("FLAC", systemImage: "waveform")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.blue.opacity(0.15))
+                    .clipShape(Capsule())
+            }
             Spacer()
             if viewModel.currentlyPlayingItem?.id == track.id {
                 Image(systemName: "waveform").foregroundColor(.accentColor)
-            }
+            } 
             Text(formatTime(track.duration ?? 0)).font(.callout).foregroundColor(.secondary)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 16)
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.playerManager.play(item: track, in: viewModel.selectedAlbumTracks)
@@ -82,3 +91,4 @@ struct AlbumTracksListView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
+

@@ -45,36 +45,53 @@ struct MusicPlayerView: View {
             }
 
             HStack(spacing: 15) {
-                           // Gruppo 1: Artwork e Titolo
-                           // Li mettiamo insieme in un HStack
-                           HStack(spacing: 12) {
-                               CachedAsyncImage(url: artworkURL) { image in image.resizable().aspectRatio(contentMode: .fill) }
-                               placeholder: { Rectangle().fill(.gray.opacity(0.2)).overlay(Image(systemName: "music.note")) }
-                               .frame(width: 55, height: 55).cornerRadius(6)
-                               
-                               VStack(alignment: .leading, spacing: 2) {
-                                   Text(item.Name).font(.headline).lineLimit(1)
-                                   if let artist = item.mainArtistName {
-                                       Text(artist).font(.subheadline).foregroundColor(.secondary).lineLimit(1)
-                                   }
-                               }
-                           }
-                           
-                           // Gruppo 2: Spacer per spingere i controlli a destra
-                           // Questo è il componente chiave che crea lo spazio
-                           Spacer()
-                           
-                           // Gruppo 3: Controlli di riproduzione
-                           HStack(spacing: 20) {
-                               Button(action: onBackward) { Image(systemName: "backward.fill").font(.title2) }.buttonStyle(.plain)
-                               Button(action: onPlayPause) { Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.largeTitle) }.buttonStyle(.plain)
-                               Button(action: onForward) { Image(systemName: "forward.fill").font(.title2) }.buttonStyle(.plain)
-                               AirPlayView().frame(width: 30, height: 30)
-                           }
-                       }
-                       .padding(.top, 8)
-                       // --- FINE MODIFICA QUI ---
-                   }
+                // Gruppo 1: Artwork e Titolo
+                // Li mettiamo insieme in un HStack
+                HStack(spacing: 12) {
+                    CachedAsyncImage(url: artworkURL,
+                        content: { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        },
+                        placeholder: {
+                            Rectangle().fill(.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
+                        }
+                    )
+                    .id(artworkURL)
+                    .frame(width: 55, height: 55)
+                    .cornerRadius(6)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.Name).font(.headline).lineLimit(1)
+                        if item.isLossless {
+                            Label("FLAC", systemImage: "waveform")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
+                        if let artist = item.mainArtistName {
+                            Text(artist).font(.subheadline).foregroundColor(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+                
+                // Gruppo 2: Spacer per spingere i controlli a destra
+                // Questo è il componente chiave che crea lo spazio
+                Spacer()
+                
+                // Gruppo 3: Controlli di riproduzione
+                HStack(spacing: 20) {
+                    Button(action: onBackward) { Image(systemName: "backward.fill").font(.title2) }.buttonStyle(.plain)
+                    Button(action: onPlayPause) { Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.largeTitle) }.buttonStyle(.plain)
+                    Button(action: onForward) { Image(systemName: "forward.fill").font(.title2) }.buttonStyle(.plain)
+                    AirPlayView().frame(width: 30, height: 30)
+                }
+            }
+            .padding(.top, 8)
+            // --- FINE MODIFICA QUI ---
+        }
         // --- INIZIO MODIFICHE DI STILE (APPLICATE AL VSTACK) ---
         
         // 1. Aggiungiamo il padding *interno* per dare aria al contenuto
@@ -98,3 +115,4 @@ struct MusicPlayerView: View {
         }
     }
 }
+

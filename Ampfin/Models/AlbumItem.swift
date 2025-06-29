@@ -6,6 +6,7 @@ struct AlbumItem: Codable, Identifiable, Hashable {
     let Name: String
     let AlbumArtist: String?
     let ProductionYear: Int?
+    let Genres: [String]?
 
     // Necessario per usare AlbumItem con NavigationLink(value: ...)
     func hash(into hasher: inout Hasher) {

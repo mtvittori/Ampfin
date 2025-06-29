@@ -43,7 +43,7 @@ struct ContentView: View {
                             isPlaying: viewModel.isPlaying,
                             currentTime: viewModel.currentTime,
                             duration: playingItem.duration ?? 0,
-                            artworkURL: viewModel.artworkURL(for: playingItem.id, size: 100),
+                            artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
                             onPlayPause: { viewModel.playerManager.togglePlayPause() },
                             onBackward: { viewModel.playerManager.backward() },
                             onForward: { viewModel.playerManager.forward() },

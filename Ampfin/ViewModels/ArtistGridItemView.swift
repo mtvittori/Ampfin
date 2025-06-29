@@ -19,7 +19,7 @@ struct ArtistGridItemView: View {
                     .fill(Color.gray.opacity(0.2))
                     .frame(width: 120, height: 120)
             }
-            Text(artist.name)
+            Text(artist.Name)
                 .font(.headline)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -28,3 +28,4 @@ struct ArtistGridItemView: View {
         .padding(8)
     }
 }
+

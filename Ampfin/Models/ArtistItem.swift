@@ -5,6 +5,7 @@ struct ArtistItem: Codable, Identifiable, Hashable {
     let Id: String
     var id: String { Id }
     let Name: String
+    let Genres: [String]?
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(Id)

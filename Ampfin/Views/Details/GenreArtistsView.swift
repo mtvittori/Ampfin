@@ -1,5 +1,3 @@
-
-// In Views/Detail/GenreArtistsView.swift
 import SwiftUI
 
 struct GenreArtistsView: View {
@@ -7,15 +5,41 @@ struct GenreArtistsView: View {
     let genreName: String
 
     private var filteredArtists: [ArtistItem] {
-        let tracksInGenre = viewModel.audioItems.filter { $0.Genres?.contains(genreName) ?? false }
-        let artistIdsInGenre = Set(tracksInGenre.compactMap { $0.AlbumArtists?.first?.Id })
-        return viewModel.artists.filter { artistIdsInGenre.contains($0.id) }.sorted { $0.Name < $1.Name }
+        viewModel.artists.filter { $0.Genres?.contains(genreName) ?? false }
+    }
+
+    private var filteredAlbums: [AlbumItem] {
+        viewModel.albums.filter { $0.Genres?.contains(genreName) ?? false }
     }
 
     var body: some View {
-        List(filteredArtists) { artist in
-            NavigationLink(value: artist) {
-                Text(artist.Name)
+        ScrollView {
+            if !filteredAlbums.isEmpty {
+                Text("Album").font(.title2).padding(.leading)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 20)]) {
+                    ForEach(filteredAlbums) { album in
+                        let artworkURL = viewModel.artworkURL(for: album.id, size: 300)
+                        NavigationLink(value: album) {
+                            AlbumGridItemView(album: album, artworkURL: artworkURL)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
+            }
+
+            if !filteredArtists.isEmpty {
+                Text("Artisti").font(.title2).padding(.leading)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 20)]) {
+                    ForEach(filteredArtists) { artist in
+                        let artworkURL = viewModel.artworkURL(for: artist.id, size: 300)
+                        NavigationLink(value: artist) {
+                            ArtistGridItemView(artist: artist, artworkURL: artworkURL)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
             }
         }
         .navigationTitle(genreName)

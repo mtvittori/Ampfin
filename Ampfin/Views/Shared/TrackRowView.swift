@@ -19,6 +19,15 @@ struct TrackRowView: View {
 
             VStack(alignment: .leading) {
                 Text(item.Name).fontWeight(.medium)
+                if item.isLossless {
+                    Label("FLAC", systemImage: "waveform")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.15))
+                        .clipShape(Capsule())
+                }
                 HStack(spacing: 4) {
                     Text(item.mainArtistName ?? "Artista Sconosciuto").foregroundColor(.secondary)
                     Text("•").foregroundColor(.secondary)
