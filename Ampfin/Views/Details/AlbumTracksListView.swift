@@ -53,6 +53,15 @@ struct AlbumTracksListView: View {
                     viewModel.playerManager.playAlbumShuffled(tracks: viewModel.selectedAlbumTracks)
                 } label: { Label("Casuale", systemImage: "shuffle").frame(maxWidth: .infinity) }
                 .buttonStyle(.bordered).controlSize(.large)
+                
+                Button(action: { viewModel.toggleRepeatMode() }) {
+                    Image(systemName: viewModel.repeatMode.iconName)
+                        .foregroundColor(viewModel.repeatMode == .off ? .primary : .accentColor)
+                }
+                .accessibilityLabel("Repeat mode")
+                .help("Repeat: \(viewModel.repeatMode)")
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
         }.padding([.horizontal, .top])
     }
@@ -91,4 +100,3 @@ struct AlbumTracksListView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
-

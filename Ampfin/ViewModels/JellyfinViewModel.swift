@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-@MainActor // Garantisce che tutte le modifiche alle property @Published avvengano sul Main Thread
+@MainActor // Garantisce che tutte le modifiche alle property @Published avvenga sul Main Thread
 class JellyfinViewModel: ObservableObject {
     // MARK: - Published Properties (Stato dell'UI)
     @Published private(set) var audioItems: [AudioItem] = []
@@ -16,10 +16,19 @@ class JellyfinViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var isLoggedIn = false
     
+    @Published var repeatMode: RepeatMode = .off
+
     // MARK: - Player State (inoltrato dal Player Manager)
     @Published private(set) var currentlyPlayingItem: AudioItem?
     @Published private(set) var isPlaying: Bool = false
+    @Published var onIsPlayingChanged: ((Bool) -> Void)?
     @Published private(set) var currentTime: TimeInterval = 0
+    @Published private(set) var recentlyPlayedAlbums: [AlbumItem] = []
+    @Published private(set) var recentlyAddedAlbums: [AlbumItem] = [] // cached recently added albums
+    
+    // Cache metadata
+    private var recentlyAddedAlbumsFetchDate: Date?
+    private let recentlyAddedAlbumsCacheTTL: TimeInterval = 60 * 5 // 5 minutes
     
     // MARK: - Servizi e Manager
     private var apiService: JellyfinAPIService
@@ -38,46 +47,119 @@ class JellyfinViewModel: ObservableObject {
 
     // MARK: - Init
     init() {
-        // Inizializza il servizio API con un URL base
+        // Inizializza il servizio API con un URL base (senza credenziali)
         self.apiService = JellyfinAPIService(serverUrl: serverUrl)
         
         // Carica le credenziali e, se presenti, avvia il setup
         loadCredentials()
-               if isLoggedIn {
+        if isLoggedIn {
             setupAuthenticatedSession()
         }
     }
     
-    // MARK: - Authentication Logic
+    // MARK: - Authentication
     
+    /// Effettua il login verso Jellyfin. Aggiorna token/userId, salva credenziali e crea i manager autenticati.
     func login(username: String, password: String) async {
         isLoading = true
         errorMessage = nil
-        
         do {
+            // usa il servizio API corrente (inizializzato senza token)
             let response = try await apiService.login(username: username, password: password)
+            
+            // Salva le credenziali nel ViewModel
             self.token = response.AccessToken
             self.userId = response.User.Id
+            
+            // Salva su storage e configura sessione autenticata
             saveCredentials()
             self.isLoggedIn = true
             setupAuthenticatedSession()
+            
+            // Carica i dati della libreria dopo il login
             await fetchAllLibraryData()
         } catch {
-            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "Errore sconosciuto."
+            // Mostra errore leggibile
+            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.isLoggedIn = false
         }
         isLoading = false
     }
-
+    
+    /// Esegue il logout: ferma il player, ripulisce lo stato e rimuove le credenziali locali.
     func logout() {
-        playerManager.stop()
-        clearCredentials()
+        // Ferma e pulisci il player manager (se presente)
+        if let manager = playerManager {
+            manager.stop()
+        }
+        
+        // Reimposta lo stato dell'app
+        audioItems = []
+        albums = []
+        artists = []
+        allAvailableGenres = []
+        selectedAlbumTracks = []
+        currentlyPlayingItem = nil
+        isPlaying = false
+        currentTime = 0
+        recentlyPlayedAlbums = []
+        recentlyAddedAlbums = []
+        
+        // Credenziali e flags
+        token = ""
+        userId = ""
         isLoggedIn = false
-        // Resetta tutti i dati
-        audioItems = []; albums = []; artists = []; allAvailableGenres = []
-        cancellables.removeAll() // Rimuove gli observer del player
+        errorMessage = nil
+        
+        // Rimuovi dal persistent storage
+        clearCredentials()
+        
+        // Ricrea il servizio API senza credenziali (per eventuali nuove login)
+        self.apiService = JellyfinAPIService(serverUrl: serverUrl)
     }
-
-    // MARK: - Data Fetching Logic
+    
+    // MARK: - Fetch helpers (unchanged)
+    func fetchRecentlyPlayedAlbums() async {
+        do {
+            let albums = try await apiService.fetchRecentlyPlayedAlbums()
+            self.recentlyPlayedAlbums = albums
+        } catch {
+            self.errorMessage = error.localizedDescription
+        }
+    }
+    
+    // NEW: fetch recently added albums (no caching here; caching applied in the "ifNeeded" wrapper)
+    func fetchRecentAddedAlbums() async {
+        guard isLoggedIn else { return }
+        do {
+            let albums = try await apiService.fetchRecentAddedAlbums()
+            self.recentlyAddedAlbums = albums
+            self.recentlyAddedAlbumsFetchDate = Date()
+        } catch {
+            self.errorMessage = error.localizedDescription
+        }
+    }
+    
+    // Public helper that checks cache TTL before fetching
+    func fetchRecentlyAddedAlbumsIfNeeded(force: Bool = false) async {
+        guard isLoggedIn else { return }
+        if !force,
+           let fetchedAt = recentlyAddedAlbumsFetchDate,
+           !recentlyAddedAlbums.isEmpty,
+           Date().timeIntervalSince(fetchedAt) < recentlyAddedAlbumsCacheTTL {
+            // cache still valid - do nothing
+            return
+        }
+        await fetchRecentAddedAlbums()
+    }
+    
+    func fetchRecentlyPlayedAlbumsIfNeeded(force: Bool = false) async {
+        guard isLoggedIn else { return }
+        if !force && !recentlyPlayedAlbums.isEmpty {
+            return
+        }
+        await fetchRecentlyPlayedAlbums()
+    }
     
     func fetchAllLibraryData() async {
         guard isLoggedIn else { return }
@@ -121,6 +203,11 @@ class JellyfinViewModel: ObservableObject {
         return apiService.artworkURL(for: itemId, size: size)
     }
     
+    func toggleRepeatMode() {
+        repeatMode.toggle()
+        playerManager.repeatMode = repeatMode
+    }
+    
     // MARK: - Private Setup and Storage
     
     private func setupAuthenticatedSession() {
@@ -131,7 +218,12 @@ class JellyfinViewModel: ObservableObject {
         // Collega gli stati del Player Manager a quelli del ViewModel
         playerManager.$currentlyPlayingItem.assign(to: &$currentlyPlayingItem)
         playerManager.$isPlaying.assign(to: &$isPlaying)
+        playerManager.$isPlaying.sink { [weak self] isPlaying in
+            self?.onIsPlayingChanged?(isPlaying)
+        }.store(in: &cancellables)
         playerManager.$currentTime.assign(to: &$currentTime)
+        
+        playerManager.repeatMode = repeatMode
     }
 
     private func saveCredentials() {

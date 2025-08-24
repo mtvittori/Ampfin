@@ -7,7 +7,7 @@ struct ArtistsView: View {
     var body: some View {
         NavigationStack {
             List(viewModel.artists) { artist in
-                NavigationLink(value: artist) {
+                NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
                     Text(artist.Name)
                 }
             }

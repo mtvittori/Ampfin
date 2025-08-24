@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct MusicPlayerView: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    
     let item: AudioItem
     let isPlaying: Bool
     let currentTime: TimeInterval
@@ -24,90 +26,104 @@ struct MusicPlayerView: View {
     }
     
     var body: some View {
-        // Il VStack è il contenitore principale del nostro contenuto
-        VStack(spacing: 0) {
-            HStack {
-                Text(formatTime(currentTime))
-                    .font(.caption2).foregroundColor(.secondary).frame(minWidth: 40)
-                Slider(
-                    value: Binding(
-                        get: { isEditingSlider ? sliderValue : currentTime },
-                        set: { sliderValue = $0 }
-                    ),
-                    in: 0...(duration > 0 ? duration : 1),
-                    onEditingChanged: { editing in
-                        isEditingSlider = editing
-                        if !editing { onSeek(sliderValue) }
+        HStack(spacing: 8) {
+            CachedAsyncImage(url: artworkURL,
+                content: { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                },
+                placeholder: {
+                    Rectangle().fill(.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
+                }
+            )
+            .id(artworkURL)
+            .frame(width: 32, height: 32)
+            .cornerRadius(6)
+            
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.Name)
+                    .font(.caption)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if item.isLossless {
+                        Label("FLAC", systemImage: "waveform")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.15))
+                            .clipShape(Capsule())
                     }
-                )
-                Text(formatTime(duration))
-                    .font(.caption2).foregroundColor(.secondary).frame(minWidth: 40)
-            }
-
-            HStack(spacing: 15) {
-                // Gruppo 1: Artwork e Titolo
-                // Li mettiamo insieme in un HStack
-                HStack(spacing: 12) {
-                    CachedAsyncImage(url: artworkURL,
-                        content: { image in
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        },
-                        placeholder: {
-                            Rectangle().fill(.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
-                        }
-                    )
-                    .id(artworkURL)
-                    .frame(width: 55, height: 55)
-                    .cornerRadius(6)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.Name).font(.headline).lineLimit(1)
-                        if item.isLossless {
-                            Label("FLAC", systemImage: "waveform")
-                                .font(.caption2)
-                                .foregroundColor(.blue)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-                        if let artist = item.mainArtistName {
-                            Text(artist).font(.subheadline).foregroundColor(.secondary).lineLimit(1)
-                        }
+                    if let artist = item.mainArtistName {
+                        Text(artist)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
-                
-                // Gruppo 2: Spacer per spingere i controlli a destra
-                // Questo è il componente chiave che crea lo spazio
-                Spacer()
-                
-                // Gruppo 3: Controlli di riproduzione
-                HStack(spacing: 20) {
-                    Button(action: onBackward) { Image(systemName: "backward.fill").font(.title2) }.buttonStyle(.plain)
-                    Button(action: onPlayPause) { Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.largeTitle) }.buttonStyle(.plain)
-                    Button(action: onForward) { Image(systemName: "forward.fill").font(.title2) }.buttonStyle(.plain)
-                    AirPlayView().frame(width: 30, height: 30)
-                }
             }
-            .padding(.top, 8)
-            // --- FINE MODIFICA QUI ---
+            .frame(minWidth: 100, maxWidth: 150, alignment: .leading)
+            
+            Text(formatTime(currentTime))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(minWidth: 40)
+            
+            Slider(
+                value: Binding(
+                    get: { isEditingSlider ? sliderValue : currentTime },
+                    set: { sliderValue = $0 }
+                ),
+                in: 0...(duration > 0 ? duration : 1),
+                onEditingChanged: { editing in
+                    isEditingSlider = editing
+                    if !editing { onSeek(sliderValue) }
+                }
+            )
+            .frame(height: 20)
+            
+            Text(formatTime(duration))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(minWidth: 40)
+            
+            HStack(spacing: 10) {
+                Button(action: onBackward) {
+                    Image(systemName: "backward.fill").font(.caption)
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: onPlayPause) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.caption)
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: onForward) {
+                    Image(systemName: "forward.fill").font(.caption)
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: { viewModel.toggleRepeatMode() }) {
+                    Image(systemName: viewModel.repeatMode.iconName).font(.caption)
+                }
+                .foregroundColor(viewModel.repeatMode == .off ? .primary : .accentColor)
+                .accessibilityLabel("Repeat mode")
+                .help({
+                    switch viewModel.repeatMode {
+                    case .off: return "Repeat off"
+                    case .all: return "Repeat all"
+                    case .one: return "Repeat one"
+                    }
+                }())
+                
+                AirPlayView()
+                    .frame(width: 24, height: 24)
+            }
+            .frame(minWidth: 130)
         }
-        // --- INIZIO MODIFICHE DI STILE (APPLICATE AL VSTACK) ---
-        
-        // 1. Aggiungiamo il padding *interno* per dare aria al contenuto
-        .padding(.vertical, 16)
-        .padding(.horizontal, 32)
-
-        // 2. Applichiamo lo sfondo con l'effetto vetro
+        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
         .glassEffect()
-        
-        // 3. Arrotondiamo gli angoli
-        
-        // 4. Aggiungiamo l'ombra
-        // .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: -5)
-        
-        // --- FINE MODIFICHE DI STILE ---
-        
+        .cornerRadius(10)
         .onChange(of: currentTime) {
             if !isEditingSlider {
                 sliderValue = currentTime
@@ -115,4 +131,3 @@ struct MusicPlayerView: View {
         }
     }
 }
-

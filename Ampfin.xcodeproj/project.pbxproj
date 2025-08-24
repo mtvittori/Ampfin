@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2672BF2F2E59BBEE00466EE2 /* ampfin_icon_glass.icon in Resources */ = {isa = PBXBuildFile; fileRef = 2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		267E9BCF2DFB0E1A00F06ED9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = ampfin_icon_glass.icon; sourceTree = "<group>"; };
 		267E9BC02DFB0E1800F06ED9 /* Ampfin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ampfin.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		267E9BCE2DFB0E1A00F06ED9 /* AmpfinTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AmpfinTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		267E9BD82DFB0E1A00F06ED9 /* AmpfinUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AmpfinUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,6 +84,7 @@
 				267E9BD12DFB0E1A00F06ED9 /* AmpfinTests */,
 				267E9BDB2DFB0E1A00F06ED9 /* AmpfinUITests */,
 				267E9BC12DFB0E1800F06ED9 /* Products */,
+				2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2672BF2F2E59BBEE00466EE2 /* ampfin_icon_glass.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -386,8 +393,9 @@
 		267E9BE32DFB0E1A00F06ED9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = ampfin_icon_glass;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ampfin/Ampfin.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
@@ -426,8 +434,9 @@
 		267E9BE42DFB0E1A00F06ED9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = ampfin_icon_glass;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ampfin/Ampfin.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

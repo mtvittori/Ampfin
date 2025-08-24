@@ -19,7 +19,7 @@ struct GenreArtistsView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 20)]) {
                     ForEach(filteredAlbums) { album in
                         let artworkURL = viewModel.artworkURL(for: album.id, size: 300)
-                        NavigationLink(value: album) {
+                        NavigationLink(destination: AlbumTracksListView(album: album)) {
                             AlbumGridItemView(album: album, artworkURL: artworkURL)
                         }
                         .buttonStyle(.plain)
@@ -33,7 +33,7 @@ struct GenreArtistsView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 20)]) {
                     ForEach(filteredArtists) { artist in
                         let artworkURL = viewModel.artworkURL(for: artist.id, size: 300)
-                        NavigationLink(value: artist) {
+                        NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
                             ArtistGridItemView(artist: artist, artworkURL: artworkURL)
                         }
                         .buttonStyle(.plain)

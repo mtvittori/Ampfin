@@ -7,6 +7,9 @@ struct ContentView: View {
         if !viewModel.isLoggedIn {
             LoginView()
                 .frame(minWidth: 800, minHeight: 600)
+                .onAppear {
+                    print("[ContentView] Showing LoginView (user NOT logged in)")
+                }
         } else {
             // Usiamo GeometryReader per creare uno sfondo unificato
             GeometryReader { geometry in
@@ -30,6 +33,9 @@ struct ContentView: View {
                         
                         GenresView()
                             .tabItem { Label("Generi", systemImage: "guitars.fill") }
+                        
+                        HomeView()
+                            .tabItem { Label("Home", systemImage: "house")}
                     }
                     // Per rendere la TabView trasparente e far vedere lo sfondo
                     // dello ZStack, dobbiamo modificare l'aspetto della UITabBar (su iOS)
@@ -59,9 +65,26 @@ struct ContentView: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
             .frame(minWidth: 800, minHeight: 600)
             .task {
+                print("[ContentView] .task triggered, audioItems count = \(viewModel.audioItems.count)")
                 if viewModel.audioItems.isEmpty {
+                    print("[ContentView] audioItems is empty, fetching library data...")
                     await viewModel.fetchAllLibraryData()
+                    print("[ContentView] fetchAllLibraryData completed, audioItems count = \(viewModel.audioItems.count)")
                 }
+            }
+            .toolbar {
+                ToolbarItem {
+                    Button {
+                        print("[ContentView] Toolbar refresh tapped")
+                        Task { 
+                            await viewModel.fetchAllLibraryData()
+                            print("[ContentView] Toolbar fetch completed, audioItems count = \(viewModel.audioItems.count)")
+                        }
+                    } label: {
+                        Label("Aggiorna", systemImage: "arrow.clockwise")
+                    }
+                }
+
             }
         }
     }

@@ -86,7 +86,7 @@ class JellyfinAPIService {
     /// Named as requested: fetchRecentAddedAlbums()
     func fetchRecentAddedAlbums() async throws -> [AlbumItem] {
         let libraryId = try await fetchMusicLibraryId()
-        // Use DateAdded to reflect actual time the item was added to the library
+        // Usare DateAdded per avere gli album effettivamente aggiunti più di recente
         let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&SortBy=DateAdded&SortOrder=Descending&Limit=20"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Large centered headphone band (thicker) -->
+  <path d="M8 26c0-12 10-22 24-22s24 10 24 22v12" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+  <!-- Left earcup (bolder) -->
+  <rect x="0" y="24" width="12" height="26" rx="6" ry="6" fill="#fff"/>
+  <!-- Right earcup (bolder) -->
+  <rect x="52" y="24" width="12" height="26" rx="6" ry="6" fill="#fff"/>
+</svg>
