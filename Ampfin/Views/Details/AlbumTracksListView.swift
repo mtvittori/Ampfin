@@ -80,9 +80,21 @@ struct AlbumTracksListView: View {
                     .clipShape(Capsule())
             }
             Spacer()
+            
+            // Favorite button for track
+            Button(action: {
+                viewModel.toggleFavoriteTrack(track.id)
+            }) {
+                Image(systemName: viewModel.isTrackFavorite(track.id) ? "heart.fill" : "heart")
+                    .foregroundColor(viewModel.isTrackFavorite(track.id) ? .red : .secondary)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .padding(.trailing, 8)
+            
             if viewModel.currentlyPlayingItem?.id == track.id {
-                Image(systemName: "waveform").foregroundColor(.accentColor)
-            } 
+                Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
+                    .foregroundColor(.accentColor)
+            }
             Text(formatTime(track.duration ?? 0)).font(.callout).foregroundColor(.secondary)
         }
         .padding(.vertical, 16)

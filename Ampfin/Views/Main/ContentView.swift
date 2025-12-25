@@ -1,7 +1,42 @@
 import SwiftUI
+import Cocoa
 
 struct ContentView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+
+    // Sidebar selection
+    enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
+        case home, tracks, albums, artists, genres, playlists, favorites
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .home: return "Home"
+            case .tracks: return "Brani"
+            case .albums: return "Album"
+            case .artists: return "Artisti"
+            case .genres: return "Generi"
+            case .playlists: return "Playlist"
+            case .favorites: return "Preferiti"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .home: return "house"
+            case .tracks: return "music.note.list"
+            case .albums: return "square.stack.fill"
+            case .artists: return "music.mic"
+            case .genres: return "guitars.fill"
+            case .playlists: return "music.note.list"
+            case .favorites: return "heart.fill"
+            }
+        }
+    }
+
+    @State private var selectedSidebar: SidebarItem? = .home
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
         if !viewModel.isLoggedIn {
@@ -11,38 +46,50 @@ struct ContentView: View {
                     print("[ContentView] Showing LoginView (user NOT logged in)")
                 }
         } else {
-            // Usiamo GeometryReader per creare uno sfondo unificato
             GeometryReader { geometry in
                 ZStack(alignment: .bottom) {
-                    // Livello 0: Sfondo di vetro unificato
-                    // Questo sfondo sta sotto tutto e dà l'effetto desiderato.
                     Color.clear
                         .background(.ultraThinMaterial)
                         .ignoresSafeArea()
 
-                    // Livello 1: La TabView principale
-                    TabView {
-                        TracksView()
-                            .tabItem { Label("Brani", systemImage: "music.note.list") }
-                        
-                        AlbumsView()
-                            .tabItem { Label("Album", systemImage: "square.stack.fill") }
-                        
-                        ArtistsView()
-                            .tabItem { Label("Artisti", systemImage: "music.mic") }
-                        
-                        GenresView()
-                            .tabItem { Label("Generi", systemImage: "guitars.fill") }
-                        
-                        HomeView()
-                            .tabItem { Label("Home", systemImage: "house")}
+                    NavigationSplitView(columnVisibility: $columnVisibility) {
+                        // Sidebar
+                        List(selection: $selectedSidebar) {
+                            ForEach(SidebarItem.allCases) { item in
+                                Label(item.title, systemImage: item.systemImage)
+                                    .tag(item)
+                                    .onTapGesture {
+                                        selectedSidebar = item
+                                    }
+                            }
+                        }
+                        .listStyle(.sidebar)
+                        .frame(minWidth: 160)
+                    } detail: {
+                        // Detail column — show the selected view
+                        Group {
+                            switch selectedSidebar {
+                            case .home, .none:
+                                HomeView()
+                            case .tracks:
+                                TracksView()
+                            case .albums:
+                                AlbumsView()
+                            case .artists:
+                                ArtistsView()
+                            case .genres:
+                                GenresView()
+                            case .playlists:
+                                GeneratedPlaylistsView()
+                            case .favorites:
+                                FavoritesView()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    // Per rendere la TabView trasparente e far vedere lo sfondo
-                    // dello ZStack, dobbiamo modificare l'aspetto della UITabBar (su iOS)
-                    // o semplicemente assicurarci che le viste interne non abbiano sfondi opachi.
-                    // Su macOS, il comportamento di default è già abbastanza trasparente.
+                    .frame(minWidth: 800, minHeight: 600)
 
-                    // Livello 2: La barra del player in overlay
+                    // Player overlay (unchanged)
                     if let playingItem = viewModel.currentlyPlayingItem {
                         MusicPlayerView(
                             item: playingItem,
@@ -55,7 +102,6 @@ struct ContentView: View {
                             onForward: { viewModel.playerManager.forward() },
                             onSeek: { time in viewModel.playerManager.seek(to: time) }
                         )
-                        // Lo stile flottante è applicato qui
                         .padding(.horizontal)
                         .padding(.bottom, 20)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -73,10 +119,42 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                ToolbarItem {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 16)
+
+                            ZStack {
+                                HStack(spacing: 8) {
+                                    TextField("Cerca...", text: $viewModel.globalSearchQuery)
+                                        .textFieldStyle(.plain)
+                                        .submitLabel(.search)
+                                        .padding(.vertical, 6)
+                                        .padding(.leading, 6)
+
+                                    if !viewModel.globalSearchQuery.isEmpty {
+                                        Button(action: { viewModel.globalSearchQuery = "" }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .padding(.trailing, 6)
+                                    }
+                                }
+                                .padding(.horizontal, 6)
+                            }
+                            .frame(width: 360, height: 34)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+
+                ToolbarItem(placement: .automatic) {
                     Button {
                         print("[ContentView] Toolbar refresh tapped")
-                        Task { 
+                        Task {
                             await viewModel.fetchAllLibraryData()
                             print("[ContentView] Toolbar fetch completed, audioItems count = \(viewModel.audioItems.count)")
                         }
@@ -85,7 +163,25 @@ struct ContentView: View {
                     }
                 }
 
+                ToolbarItem(placement: .automatic) {
+                    Button(action: { viewModel.logout() }) {
+                        Label("Logout", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                }
             }
+        }
+    }
+
+    private func toggleSidebarVisibility() {
+        switch columnVisibility {
+        case .all:
+            columnVisibility = .detailOnly
+        case .detailOnly:
+            columnVisibility = .all
+        case .automatic:
+            columnVisibility = .all
+        default:
+            columnVisibility = .all
         }
     }
 }

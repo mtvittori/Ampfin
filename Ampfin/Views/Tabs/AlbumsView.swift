@@ -5,55 +5,56 @@ struct AlbumsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 20)]
     
-    // 1. Stato per la navigazione programmatica
-    @State private var selectedAlbum: AlbumItem?
+    // If the global search query is present, filter albums accordingly
+    private var displayedAlbums: [AlbumItem] {
+        let query = viewModel.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return viewModel.albums
+        } else {
+            return viewModel.albums.filter {
+                $0.Name.localizedCaseInsensitiveContains(query) ||
+                ($0.AlbumArtist ?? "").localizedCaseInsensitiveContains(query) ||
+                ($0.Genres?.joined(separator: " ").localizedCaseInsensitiveContains(query) ?? false)
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
-            List {
-                LazyVGrid(columns: columns, spacing: 20) {
-                    ForEach(viewModel.albums) { album in
-                        let artworkURL = viewModel.artworkURL(for: album.id, size: 300)
-                        
-                        // 2. Usiamo un Button invece di un NavigationLink diretto
-                        Button(action: {
-                            // Quando si clicca, impostiamo l'album selezionato
-                            selectedAlbum = album
-                        }) {
-                            AlbumGridItemView(album: album, artworkURL: artworkURL)
-                                .drawingGroup()
+            // Usare ScrollView + LazyVGrid evita che l'intera riga di List venga selezionata
+            ScrollView {
+                VStack(spacing: 0) {
+                    if displayedAlbums.isEmpty {
+                        VStack {
+                            Text("Nessun album trovato.")
+                                .foregroundColor(.secondary)
+                                .padding()
                         }
-                        .buttonStyle(.plain) // Mantiene l'aspetto pulito
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 20) {
+                            ForEach(displayedAlbums) { album in
+                                NavigationLink(destination: AlbumTracksListView(album: album)) {
+                                    AlbumGridItemView(album: album, artworkURL: viewModel.artworkURL(for: album.id, size: 300))
+                                        .frame(minWidth: 140, minHeight: 160)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.top)
+                        .padding(.bottom, 40) // lascia spazio per eventuale player overlay
                     }
                 }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets())
-                .padding(.horizontal)
-                .padding(.bottom)
+                .frame(maxWidth: .infinity)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("Album")
-            
-            // 3. NavigationLink invisibile, attivato dallo stato
-            // Lo mettiamo in background per non influenzare il layout.
-            .background(
-                NavigationLink(
-                    tag: selectedAlbum ?? viewModel.albums.first!, // Usa un valore di fallback valido
-                    selection: $selectedAlbum,
-                    destination: {
-                        // Assicurati che selectedAlbum non sia nil prima di usarlo
-                        if let albumToView = selectedAlbum {
-                            AlbumTracksListView(album: albumToView)
-                        } else {
-                            // Vista di fallback nel caso improbabile sia nil
-                            EmptyView()
-                        }
-                    },
-                    label: { EmptyView() }
-                )
-            )
-            // La vecchia navigationDestination non serve più con questo approccio
+            // Manteniamo la navigationDestination per compatibilità con altre parti dell'app
+            .navigationDestination(for: AlbumItem.self) { album in
+                AlbumTracksListView(album: album)
+            }
         }
     }
 }

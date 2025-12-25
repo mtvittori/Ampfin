@@ -7,6 +7,8 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                FavoritesSectionSplit()
+
                 ResumeNowSection()
 
                 RecentTracksSection()
@@ -18,16 +20,139 @@ struct HomeView: View {
             .padding()
         }
         .task {
-            // Use the "ifNeeded" helpers that include caching checks
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()
             await viewModel.fetchRecentlyAddedAlbumsIfNeeded()
-            // Note: recently played tracks endpoint not implemented — RecentTracksSection uses a fallback.
         }
+    }
+}
+
+private struct FavoritesSectionSplit: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    private let albumColumns = [GridItem(.adaptive(minimum: 140), spacing: 12)]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Preferiti")
+                .font(.title2)
+                .bold()
+                .padding(.horizontal, 4)
+            
+            // Favorite albums
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Album")
+                    .font(.headline)
+                    .padding(.horizontal, 4)
+                
+                if viewModel.favoriteAlbums.isEmpty {
+                    Text("Nessun album preferito — tocca il cuore su un album per aggiungerlo.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+                } else {
+                    LazyVGrid(columns: albumColumns, spacing: 12) {
+                        ForEach(viewModel.favoriteAlbums) { album in
+                            let artworkURL = viewModel.artworkURL(for: album.id, size: 300)
+                            NavigationLink(destination: AlbumTracksListView(album: album)) {
+                                AlbumGridItemView(album: album, artworkURL: artworkURL)
+                                    .frame(minWidth: 140, minHeight: 160)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+            
+            // Favorite tracks
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Brani")
+                    .font(.headline)
+                    .padding(.horizontal, 4)
+                
+                if viewModel.favoriteTracks.isEmpty {
+                    Text("Nessun brano preferito — tocca il cuore su una traccia per aggiungerla.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(viewModel.favoriteTracks) { track in
+                            HStack(spacing: 10) {
+                                CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 80)) { image in
+                                    image.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Rectangle().fill(Color.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
+                                }
+                                .frame(width: 48, height: 48)
+                                .cornerRadius(6)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(track.Name).font(.subheadline).lineLimit(1)
+                                    Text(track.mainArtistName ?? "Artista Sconosciuto")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+
+                                Button(action: {
+                                    viewModel.toggleFavoriteTrack(track.id)
+                                }) {
+                                    Image(systemName: viewModel.isTrackFavorite(track.id) ? "heart.fill" : "heart")
+                                        .foregroundColor(viewModel.isTrackFavorite(track.id) ? .red : .secondary)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+
+                                if viewModel.currentlyPlayingItem?.id == track.id {
+                                    Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
+                                        .foregroundColor(.accentColor)
+                                }
+
+                                Button(action: {
+                                    let isCurrent = (viewModel.currentlyPlayingItem?.id == track.id)
+                                    if isCurrent {
+                                        if viewModel.isPlaying {
+                                            viewModel.playerManager.pause()
+                                        } else {
+                                            viewModel.playerManager.play()
+                                        }
+                                    } else {
+                                        viewModel.playerManager.play(item: track, in: viewModel.audioItems)
+                                    }
+                                }) {
+                                    let isCurrent = (viewModel.currentlyPlayingItem?.id == track.id)
+                                    let playing = viewModel.isPlaying && isCurrent
+                                    Image(systemName: playing ? "pause.fill" : "play.fill")
+                                        .foregroundColor(.accentColor)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                            .padding(8)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 4)
     }
 }
 
 private struct ResumeNowSection: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+
+    // Scala applicata solo a questa sezione
+    private let playScale: CGFloat = 1.5
+    private var artworkResumeSize: CGFloat { 60 * playScale } // da 60 -> 90
+    private var playButtonSize: CGFloat { 44 * playScale } // da 44 -> 66
+    private var iconSize: CGFloat { 18 * playScale } // icona interna al bottone
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -45,8 +170,8 @@ private struct ResumeNowSection: View {
                     } placeholder: {
                         Rectangle().fill(Color.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
                     }
-                    .id(artworkURL) // forza il refresh quando cambia l'URL
-                    .frame(width: 60, height: 60)
+                    .id(artworkURL)
+                    .frame(width: artworkResumeSize, height: artworkResumeSize)
                     .cornerRadius(6)
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -65,17 +190,15 @@ private struct ResumeNowSection: View {
                     }
                     Spacer()
 
-                    // Play / Pause toggle button:
                     Button(action: {
                         handlePlayPause(for: item)
                     }) {
-                        // If the shown item is the currently playing one and playback is active, show Pause
                         let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
                         let playing = viewModel.isPlaying && isCurrent
                         Image(systemName: playing ? "pause.fill" : "play.fill")
-                            .font(.title2)
+                            .font(.system(size: iconSize))
                             .foregroundColor(.accentColor)
-                            .frame(width: 44, height: 44)
+                            .frame(width: playButtonSize, height: playButtonSize)
                             .background(Color.accentColor.opacity(0.1))
                             .clipShape(Circle())
                     }
@@ -99,31 +222,24 @@ private struct ResumeNowSection: View {
     private func handlePlayPause(for item: AudioItem) {
         let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
         if isCurrent {
-            // If this is the current item, toggle play/pause
             if viewModel.isPlaying {
                 viewModel.playerManager.pause()
             } else {
-                // Resume existing item without re-creating queue
                 viewModel.playerManager.play()
             }
         } else {
-            // Start playback of this item within the app-wide queue
             viewModel.playerManager.play(item: item, in: viewModel.audioItems)
         }
     }
 
     private var currentlyPlayingItem: AudioItem? {
-        // Prefer the actual playing item from the player (if any)
         if let current = viewModel.currentlyPlayingItem {
             return current
         }
-
-        // Fallback: show the first available audio item
         return viewModel.audioItems.first
     }
 
     private var playbackPositionText: String? {
-        // Only show playback position when the item displayed is the actual currently playing item
         guard let playing = viewModel.currentlyPlayingItem else { return nil }
         guard let displayed = currentlyPlayingItem, playing.id == displayed.id else { return nil }
 
@@ -134,14 +250,12 @@ private struct ResumeNowSection: View {
     }
 }
 
-
 /// Recent tracks section (fallback uses the first N audioItems if there's no dedicated recently-played endpoint)
 private struct RecentTracksSection: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     private let maxItems = 8
 
     private var tracks: [AudioItem] {
-        // Fallback: if you later add a `recentlyPlayedTracks` to the ViewModel, replace this with that property.
         Array(viewModel.audioItems.prefix(maxItems))
     }
 
@@ -182,14 +296,31 @@ private struct RecentTracksSection: View {
                             }
                             Spacer()
 
+                            // Favorite button for track
+                            Button(action: {
+                                viewModel.toggleFavoriteTrack(track.id)
+                            }) {
+                                Image(systemName: viewModel.isTrackFavorite(track.id) ? "heart.fill" : "heart")
+                                    .foregroundColor(viewModel.isTrackFavorite(track.id) ? .red : .secondary)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+
                             if viewModel.currentlyPlayingItem?.id == track.id {
-                                // Indicate currently playing
                                 Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
                                     .foregroundColor(.accentColor)
                             }
 
                             Button(action: {
-                                handlePlay(for: track)
+                                let isCurrent = (viewModel.currentlyPlayingItem?.id == track.id)
+                                if isCurrent {
+                                    if viewModel.isPlaying {
+                                        viewModel.playerManager.pause()
+                                    } else {
+                                        viewModel.playerManager.play()
+                                    }
+                                } else {
+                                    viewModel.playerManager.play(item: track, in: viewModel.audioItems)
+                                }
                             }) {
                                 let isCurrent = (viewModel.currentlyPlayingItem?.id == track.id)
                                 let playing = viewModel.isPlaying && isCurrent
@@ -207,21 +338,7 @@ private struct RecentTracksSection: View {
         }
         .padding(.horizontal, 4)
     }
-
-    private func handlePlay(for track: AudioItem) {
-        let isCurrent = (viewModel.currentlyPlayingItem?.id == track.id)
-        if isCurrent {
-            if viewModel.isPlaying {
-                viewModel.playerManager.pause()
-            } else {
-                viewModel.playerManager.play()
-            }
-        } else {
-            viewModel.playerManager.play(item: track, in: viewModel.audioItems)
-        }
-    }
 }
-
 
 /// Recent albums section — now prefers recentlyAddedAlbums, falls back to recentlyPlayedAlbums then general albums
 private struct RecentAlbumsSection: View {

@@ -4,9 +4,22 @@ import SwiftUI
 struct ArtistsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
 
+    // Use global search query to filter artists
+    private var displayedArtists: [ArtistItem] {
+        let query = viewModel.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return viewModel.artists
+        } else {
+            return viewModel.artists.filter {
+                $0.Name.localizedCaseInsensitiveContains(query) ||
+                ($0.Genres?.joined(separator: " ").localizedCaseInsensitiveContains(query) ?? false)
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List(viewModel.artists) { artist in
+            List(displayedArtists) { artist in
                 NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
                     Text(artist.Name)
                 }
@@ -16,7 +29,6 @@ struct ArtistsView: View {
                 ArtistAlbumsView(artist: artist)
             }
             .navigationDestination(for: AlbumItem.self) { album in
-                // Aggiungiamo questa destinazione per navigare dall'album dell'artista al dettaglio tracce
                 AlbumTracksListView(album: album)
             }
         }

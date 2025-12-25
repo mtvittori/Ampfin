@@ -1,3 +1,4 @@
+// JellyfinAPIService.swift
 import Foundation
 
 // Definiamo un errore personalizzato per gestire meglio i fallimenti API
@@ -108,7 +109,8 @@ class JellyfinAPIService {
     }
     
     func fetchAlbums(from libraryId: String) async throws -> [AlbumItem] {
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists&SortBy=SortName"
+        // Modificato: ordina per DateAdded in ordine discendente così gli album saranno mostrati per data di aggiunta
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists&SortBy=DateAdded&SortOrder=Descending"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -121,6 +123,23 @@ class JellyfinAPIService {
 
     func fetchAlbumTracks(albumId: String) async throws -> [AudioItem] {
         let endpoint = "/Users/\(userId)/Items?ParentId=\(albumId)&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Audio&Fields=AlbumArtists,Artists,MediaSources,AlbumId"
+        let response: AudioResponse = try await fetch(endpoint: endpoint)
+        return response.Items
+    }
+
+    // MARK: - Playlists API (nuovi metodi)
+    /// Recupera le playlist dell'utente
+    func fetchUserPlaylists() async throws -> [PlaylistItem] {
+        // Endpoint: chiediamo Items con IncludeItemTypes=Playlist; Jellyfin ritorna le playlist come Items
+        let endpoint = "/Users/\(userId)/Items?IncludeItemTypes=Playlist&Recursive=true&SortBy=Name"
+        let response: PlaylistResponse = try await fetch(endpoint: endpoint)
+        return response.Items
+    }
+
+    /// Recupera gli elementi di una playlist specifica
+    /// Nota: l'endpoint /Playlists/{id}/Items ritorna gli items della playlist
+    func fetchPlaylistItems(playlistId: String) async throws -> [AudioItem] {
+        let endpoint = "/Playlists/\(playlistId)/Items"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -152,7 +171,10 @@ class JellyfinAPIService {
         }
         
         do {
-            return try JSONDecoder().decode(T.self, from: data)
+            // DECODIFICA OFF-MAIN-THREAD per non bloccare l'interfaccia.
+            return try await Task.detached(priority: .userInitiated) {
+                try JSONDecoder().decode(T.self, from: data)
+            }.value
         } catch {
             throw APIError.decodingError(error)
         }

@@ -1,16 +1,49 @@
 {
-  "fill" : {
-    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
-  },
+  "fill" : "automatic",
   "groups" : [
     {
       "layers" : [
         {
-          "blend-mode" : "normal",
-          "fill" : "automatic",
+          "blend-mode-specializations" : [
+            {
+              "value" : "normal"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "darken"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "extended-gray:0.00000,1.00000",
+                  "extended-srgb:1.00000,0.55294,0.15686,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "extended-srgb:1.00000,0.55294,0.15686,1.00000",
+                  "extended-gray:1.00000,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "linear-gradient" : [
+                  "extended-gray:1.00000,1.00000",
+                  "extended-gray:1.00000,1.00000"
+                ]
+              }
+            }
+          ],
           "glass" : true,
-          "image-name" : "headphones_studio_style_with_coil_cable 2.svg",
-          "name" : "headphones_studio_style_with_coil_cable 2",
+          "image-name" : "noun-headphone-to-headphone-1862121.svg",
+          "name" : "noun-headphone-to-headphone-1862121",
           "position" : {
             "scale" : 8,
             "translation-in-points" : [

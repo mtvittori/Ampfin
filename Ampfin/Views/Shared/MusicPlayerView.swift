@@ -16,7 +16,24 @@ struct MusicPlayerView: View {
     
     @State private var sliderValue: Double = 0
     @State private var isEditingSlider: Bool = false
-    
+
+    // Scale: 1.5x
+    private let uiScale: CGFloat = 1.5
+    private var artworkSize: CGFloat { 32 * uiScale }           // was 32
+    private var minTitleWidth: CGFloat { 100 * uiScale }       // was 100
+    private var maxTitleWidth: CGFloat { 150 * uiScale }       // was 150
+    private var timeWidth: CGFloat { 40 * uiScale }            // was 40
+    private var sliderHeight: CGFloat { 20 * uiScale }         // was 20
+    private var controlMinWidth: CGFloat { 130 * uiScale }     // was 130
+    private var iconFontSize: CGFloat { 12 * uiScale }         // approximate caption size scaled
+    private var iconSmallFontSize: CGFloat { 11 * uiScale }    // approximate caption2 size scaled
+    private var airplaySize: CGFloat { 24 * uiScale }          // was 24
+    private var horizontalPadding: CGFloat { 16 * uiScale }    // was 16
+    private var verticalPadding: CGFloat { 4 * uiScale }       // was 4
+    private var cornerRadiusVal: CGFloat { 10 * uiScale }      // was 10
+    private var overlayLineWidth: CGFloat { 0.6 * uiScale }    // was 0.6
+    private var shadowRadius: CGFloat { 6 * uiScale }          // was 6
+
     private func formatTime(_ time: TimeInterval) -> String {
         guard !time.isNaN && !time.isInfinite && time >= 0 else { return "0:00" }
         let totalSeconds = Int(time)
@@ -26,7 +43,7 @@ struct MusicPlayerView: View {
     }
     
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 8 * uiScale) {
             CachedAsyncImage(url: artworkURL,
                 content: { image in
                     image.resizable().aspectRatio(contentMode: .fill)
@@ -36,37 +53,37 @@ struct MusicPlayerView: View {
                 }
             )
             .id(artworkURL)
-            .frame(width: 32, height: 32)
-            .cornerRadius(6)
+            .frame(width: artworkSize, height: artworkSize)
+            .cornerRadius(6 * uiScale)
             
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2 * uiScale) {
                 Text(item.Name)
-                    .font(.caption)
+                    .font(.system(size: iconFontSize)) // scaled caption
                     .lineLimit(1)
-                HStack(spacing: 4) {
+                HStack(spacing: 4 * uiScale) {
                     if item.isLossless {
                         Label("FLAC", systemImage: "waveform")
-                            .font(.caption2)
+                            .font(.system(size: iconSmallFontSize))
                             .foregroundColor(.blue)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 4 * uiScale)
+                            .padding(.vertical, 1 * uiScale)
                             .background(Color.blue.opacity(0.15))
                             .clipShape(Capsule())
                     }
                     if let artist = item.mainArtistName {
                         Text(artist)
-                            .font(.caption2)
+                            .font(.system(size: iconSmallFontSize))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
                 }
             }
-            .frame(minWidth: 100, maxWidth: 150, alignment: .leading)
+            .frame(minWidth: minTitleWidth, maxWidth: maxTitleWidth, alignment: .leading)
             
             Text(formatTime(currentTime))
-                .font(.caption2)
+                .font(.system(size: iconSmallFontSize))
                 .foregroundColor(.secondary)
-                .frame(minWidth: 40)
+                .frame(minWidth: timeWidth)
             
             Slider(
                 value: Binding(
@@ -79,32 +96,37 @@ struct MusicPlayerView: View {
                     if !editing { onSeek(sliderValue) }
                 }
             )
-            .frame(height: 20)
+            .frame(height: sliderHeight)
             
             Text(formatTime(duration))
-                .font(.caption2)
+                .font(.system(size: iconSmallFontSize))
                 .foregroundColor(.secondary)
-                .frame(minWidth: 40)
+                .frame(minWidth: timeWidth)
             
-            HStack(spacing: 10) {
+            HStack(spacing: 10 * uiScale) {
                 Button(action: onBackward) {
-                    Image(systemName: "backward.fill").font(.caption)
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: iconFontSize))
                 }
                 .buttonStyle(.plain)
                 
                 Button(action: onPlayPause) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill").font(.caption)
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: iconFontSize))
                 }
                 .buttonStyle(.plain)
                 
                 Button(action: onForward) {
-                    Image(systemName: "forward.fill").font(.caption)
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: iconFontSize))
                 }
                 .buttonStyle(.plain)
                 
                 Button(action: { viewModel.toggleRepeatMode() }) {
-                    Image(systemName: viewModel.repeatMode.iconName).font(.caption)
+                    Image(systemName: viewModel.repeatMode.iconName)
+                        .font(.system(size: iconFontSize))
                 }
+                .buttonStyle(.plain)
                 .foregroundColor(viewModel.repeatMode == .off ? .primary : .accentColor)
                 .accessibilityLabel("Repeat mode")
                 .help({
@@ -116,14 +138,19 @@ struct MusicPlayerView: View {
                 }())
                 
                 AirPlayView()
-                    .frame(width: 24, height: 24)
+                    .frame(width: airplaySize, height: airplaySize)
             }
-            .frame(minWidth: 130)
+            .frame(minWidth: controlMinWidth)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 16)
-        .glassEffect()
-        .cornerRadius(10)
+        .padding(.vertical, verticalPadding)
+        .padding(.horizontal, horizontalPadding)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadiusVal, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadiusVal, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: overlayLineWidth)
+        )
+        .shadow(radius: shadowRadius)
         .onChange(of: currentTime) {
             if !isEditingSlider {
                 sliderValue = currentTime
