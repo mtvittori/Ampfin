@@ -20,6 +20,16 @@ enum APIError: Error, LocalizedError {
 
 class JellyfinAPIService {
     
+    /// Stable per-install device id: Jellyfin ties sessions and tokens to it,
+    /// so a fresh UUID on every request spawns a new "device" each time.
+    private static let deviceId: String = {
+        let key = "jellyfin_deviceid"
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+
     private let serverUrl: String
     private var token: String = ""
     private var userId: String = ""
@@ -47,9 +57,8 @@ class JellyfinAPIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let deviceId = UUID().uuidString
-        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(deviceId)\", Version=\"1.0.0\""
-        request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\""
+        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
         struct LoginRequest: Codable { let Username: String; let Pw: String }
         request.httpBody = try JSONEncoder().encode(LoginRequest(Username: username, Pw: password))
@@ -181,8 +190,8 @@ class JellyfinAPIService {
     }
     
     private func addAuthHeader(to request: inout URLRequest) {
-        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(token)\""
-        request.setValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\", Token=\"\(token)\""
+        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
 }

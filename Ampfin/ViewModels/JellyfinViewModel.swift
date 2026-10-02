@@ -391,6 +391,7 @@ class JellyfinViewModel: ObservableObject {
             self.allAvailableGenres = Array(Set(fetchedTracks.compactMap { $0.Genres }.flatMap { $0 })).sorted()
             
         } catch {
+            print("[Library] Fetch failed: \(error)")
             self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "Errore nel caricamento della libreria."
         }
         isLoading = false
