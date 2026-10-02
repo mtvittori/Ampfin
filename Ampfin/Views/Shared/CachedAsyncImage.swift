@@ -1,88 +1,121 @@
 // In Views/Shared/CachedAsyncImage.swift
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     private let url: URL?
-    private let scale: CGFloat
-    private let transaction: Transaction
     private let content: (Image) -> Content
     private let placeholder: () -> Placeholder
+    private let targetSize: CGFloat?
 
-    @State private var cachedImage: Image?
+    @State private var image: Image?
+    @State private var task: Task<Void, Never>?
+    @Environment(\.displayScale) private var displayScale
 
     init(
         url: URL?,
-        scale: CGFloat = 1,
-        transaction: Transaction = Transaction(),
+        targetSize: CGFloat? = nil,
         @ViewBuilder content: @escaping (Image) -> Content,
         @ViewBuilder placeholder: @escaping () -> Placeholder
     ) {
         self.url = url
-        self.scale = scale
-        self.transaction = transaction
+        self.targetSize = targetSize
         self.content = content
         self.placeholder = placeholder
     }
 
     var body: some View {
-        if let cachedImage = cachedImage {
-            // Se abbiamo un'immagine in cache, la mostriamo subito
-            content(cachedImage)
-        } else if let url = url {
-            // Altrimenti, usiamo la logica di AsyncImage
-            AsyncImage(
-                url: url,
-                scale: scale,
-                transaction: transaction
-            ) { phase in
-                switch phase {
-                case .success(let image):
-                    // Quando AsyncImage ha successo, salviamo l'immagine in cache
-                    // e la mostriamo
-                    let _ = cacheImage(from: image, for: url)
-                    content(image)
-                case .failure:
-                    // Se fallisce, mostriamo il placeholder
-                    placeholder()
-                case .empty:
-                    // Mentre carica, mostriamo il placeholder
-                    placeholder()
-                @unknown default:
-                    placeholder()
-                }
+        Group {
+            if let image {
+                content(image)
+            } else {
+                placeholder()
             }
-            .onAppear {
-                // Quando la vista appare, controlliamo subito se l'immagine è già in cache
-                checkCache(for: url)
-            }
-        } else {
-            placeholder()
+        }
+        .onAppear {
+            loadIfNeeded()
+        }
+        .onChange(of: url) {
+            // cambia URL → reset e ricarica
+            image = nil
+            task?.cancel()
+            task = nil
+            loadIfNeeded()
+        }
+        .onDisappear {
+            task?.cancel()
+            task = nil
         }
     }
 
-    private func checkCache(for url: URL) {
+    private func loadIfNeeded() {
+        guard image == nil else { return }
+        guard let url else { return }
+
         let key = ImageCacheService.shared.key(for: url)
-        if let nsImage = ImageCacheService.shared.getImage(forKey: key) {
-            // Se troviamo l'immagine (NSImage), la convertiamo in una Image di SwiftUI
-            self.cachedImage = Image(nsImage: nsImage)
+        if let cached = ImageCacheService.shared.getImage(forKey: key) {
+            self.image = Image(platformImage: cached)
+            return
+        }
+
+        let scale = displayScale
+        task = Task.detached(priority: .utility) {
+            do {
+                let (data, _) = try await JellyfinAPIService.urlSession.data(from: url)
+
+                // Downsample the image to the target display size to reduce memory
+                let platform: PlatformImage?
+                if let size = targetSize {
+                    platform = Self.downsample(data: data, to: size, scale: scale)
+                } else {
+                    platform = PlatformImage(data: data)
+                }
+
+                guard let platform else { return }
+
+                ImageCacheService.shared.setImage(platform, forKey: key)
+
+                await MainActor.run {
+                    self.image = Image(platformImage: platform)
+                }
+            } catch {
+                // lascia placeholder
+            }
         }
     }
-    
-    // Per salvare l'immagine, dobbiamo renderizzarla in un NSImage per poterla salvare
-    @MainActor
-    private func cacheImage(from image: Image, for url: URL) -> some View {
-        // Questa è la parte più complessa: renderizzare una SwiftUI Image in un'immagine concreta
-        let key = ImageCacheService.shared.key(for: url)
-        let renderer = ImageRenderer(content: image)
-        
-        // La dimensione qui è indicativa, renderer si adatta al contenuto
-        renderer.proposedSize = .init(width: 300, height: 300)
-        
-        if let nsImage = renderer.nsImage {
-            ImageCacheService.shared.setImage(nsImage, forKey: key)
+
+    /// Downsamples image data to a target pixel size using ImageIO for memory efficiency
+    private nonisolated static func downsample(data: Data, to pointSize: CGFloat, scale: CGFloat) -> PlatformImage? {
+        let maxPixelSize = Int(pointSize * scale)
+        // A degenerate target (0 or negative) would ask ImageIO to allocate a zero-size
+        // thumbnail slot, which fails and logs a "Failed to create WxH image slot" warning.
+        guard maxPixelSize > 0 else { return PlatformImage(data: data) }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary) else {
+            return PlatformImage(data: data)
         }
-        
-        // Ritorniamo una vista vuota perché questo modificatore non deve disegnare nulla
-        return EmptyView()
+
+        let downsampleOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) else {
+            return PlatformImage(data: data)
+        }
+
+        #if os(macOS)
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        #else
+        return UIImage(cgImage: cgImage)
+        #endif
     }
 }

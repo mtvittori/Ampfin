@@ -1,71 +1,95 @@
 // In Services/ImageCacheService.swift
 import Foundation
-import AppKit // Usiamo NSImage per macOS
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
-class ImageCacheService {
-    // Singleton per un accesso facile e globale
+final class ImageCacheService {
     static let shared = ImageCacheService()
-    
-    // Cache in memoria: veloce ma volatile
-    private let memoryCache = NSCache<NSString, NSImage>()
-    
-    // Cache su disco: più lenta ma persistente
+
+    private let memoryCache = NSCache<NSString, PlatformImage>()
     private let fileManager = FileManager.default
     private let diskCachePath: URL
-    
+
     private init() {
-        // Creiamo una cartella dedicata nella directory di cache dell'utente
         if let cacheDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first {
             self.diskCachePath = cacheDirectory.appendingPathComponent("ImageCache")
-            
-            // Creiamo la cartella se non esiste
             if !fileManager.fileExists(atPath: self.diskCachePath.path) {
                 try? fileManager.createDirectory(at: self.diskCachePath, withIntermediateDirectories: true, attributes: nil)
             }
         } else {
-            // Fallback nel caso non si possa accedere alla directory di cache
             self.diskCachePath = URL(fileURLWithPath: "")
         }
-        
-        // Impostiamo un limite per la cache in memoria per non usare troppa RAM
-        memoryCache.countLimit = 100 // Manterrà in memoria le ultime 100 immagini
+        memoryCache.countLimit = 500
+        // Limit total memory cost to ~100 MB (assuming average ~200KB per image)
+        memoryCache.totalCostLimit = 100 * 1024 * 1024
     }
-    
-    // Funzione per ottenere un'immagine
-    func getImage(forKey key: String) -> NSImage? {
-        // 1. Prova a prenderla dalla cache in memoria (velocissimo)
-        if let cachedImage = memoryCache.object(forKey: key as NSString) {
-            return cachedImage
+
+    func getImage(forKey key: String) -> PlatformImage? {
+        if let cached = memoryCache.object(forKey: key as NSString) {
+            return cached
         }
-        
-        // 2. Se non c'è, prova a prenderla dalla cache su disco
+
         let fileURL = diskCachePath.appendingPathComponent(key)
-        if let data = try? Data(contentsOf: fileURL), let image = NSImage(data: data) {
-            // Se la troviamo su disco, la mettiamo anche in memoria per accessi futuri più veloci
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+
+        if let image = PlatformImage(data: data) {
             memoryCache.setObject(image, forKey: key as NSString)
             return image
         }
-        
-        // 3. Se non si trova da nessuna parte, ritorna nil
+
         return nil
     }
-    
-    // Funzione per salvare un'immagine
-    func setImage(_ image: NSImage, forKey key: String) {
-        // 1. Salva in memoria
+
+    func setImage(_ image: PlatformImage, forKey key: String) {
         memoryCache.setObject(image, forKey: key as NSString)
-        
-        // 2. Salva su disco in background per non bloccare l'UI
+
         DispatchQueue.global(qos: .background).async {
-            guard let data = image.tiffRepresentation else { return }
             let fileURL = self.diskCachePath.appendingPathComponent(key)
+
+            #if os(macOS)
+            // Use JPEG instead of TIFF for much smaller disk footprint
+            guard let tiff = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+            else { return }
             try? data.write(to: fileURL)
+            #else
+            let data = image.jpegData(compressionQuality: 0.85) ?? image.pngData()
+            guard let data else { return }
+            try? data.write(to: fileURL)
+            #endif
         }
     }
-    
-    // Funzione helper per generare una chiave unica dall'URL
+
+    func clearAll() {
+        memoryCache.removeAllObjects()
+        try? fileManager.removeItem(at: diskCachePath)
+        try? fileManager.createDirectory(at: diskCachePath, withIntermediateDirectories: true)
+    }
+
+    func diskSize() -> Int64 {
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: diskCachePath,
+            includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return 0 }
+
+        return files.reduce(0) { total, url in
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            return total + Int64(size)
+        }
+    }
+
     func key(for url: URL) -> String {
-        // Usiamo un hash del path dell'URL per creare un nome file sicuro e unico
-        return url.path.data(using: .utf8)?.base64EncodedString() ?? url.absoluteString
+        // Use SHA256-style hex hash via simple hashing for file-safe keys
+        // (base64 can contain "/" which is not file-safe)
+        let input = url.absoluteString
+        var hash: UInt64 = 5381
+        for byte in input.utf8 {
+            hash = ((hash &<< 5) &+ hash) &+ UInt64(byte)
+        }
+        return String(format: "%016llx", hash)
     }
 }

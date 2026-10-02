@@ -40,6 +40,7 @@ struct GeneratedPlaylistsView: View {
                 }) {
                     Label("Aggiorna", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.glass)
             }
         }
         .task {
@@ -90,10 +91,10 @@ struct GeneratedPlaylistsView: View {
                 }
             }) {
                 Image(systemName: "play.fill")
-                    .foregroundColor(.accentColor)
+                    .frame(width: 30, height: 30)
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.trailing, 6)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
 
             // Shuffle button
             Button(action: {
@@ -102,8 +103,10 @@ struct GeneratedPlaylistsView: View {
                 }
             }) {
                 Image(systemName: "shuffle")
+                    .frame(width: 30, height: 30)
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())

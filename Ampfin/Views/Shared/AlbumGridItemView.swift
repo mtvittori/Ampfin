@@ -2,35 +2,33 @@
 import SwiftUI
 
 struct AlbumGridItemView: View {
-    // Non dipende più dal viewModel! -> ora dipende per il pulsante preferiti
     @EnvironmentObject var viewModel: JellyfinViewModel
     let album: AlbumItem
-    let artworkURL: URL? // Riceve l'URL direttamente
+    let artworkURL: URL?
     
     var body: some View {
         VStack(alignment: .leading) {
             ZStack(alignment: .topTrailing) {
-                CachedAsyncImage(url: artworkURL) { image in
+                CachedAsyncImage(url: artworkURL, targetSize: 300) { image in
                     image.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: {
                     Rectangle().foregroundColor(.secondary.opacity(0.3))
                         .overlay(Image(systemName: "music.note").font(.largeTitle))
                 }
-                .cornerRadius(8)
-                .shadow(radius: 4)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 
-                // Favorite button in overlay
+                // Favorite button with Liquid Glass
                 Button(action: {
                     viewModel.toggleFavoriteAlbum(album.id)
                 }) {
                     Image(systemName: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart")
                         .foregroundColor(viewModel.isAlbumFavorite(album.id) ? .red : .white)
-                        .padding(8)
-                        .background(Color.black.opacity(0.35))
-                        .clipShape(Circle())
+                        .font(.callout)
+                        .frame(width: 26, height: 26)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .padding(8)
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .padding(6)
             }
             
             Text(album.Name).font(.headline).lineLimit(1)

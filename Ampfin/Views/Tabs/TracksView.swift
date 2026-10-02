@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct TracksView: View {
+    @ObservedObject private var colorManager = AccentColorManager.shared
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var downloadManager = DownloadManager.shared
     @State private var searchText = ""
 
     var filteredTracks: [AudioItem] {
@@ -19,6 +21,14 @@ struct TracksView: View {
     }
     
     var body: some View {
+        if colorManager.zuneStyleEnabled {
+            ZuneTracksView(tracks: filteredTracks)
+        } else {
+            classicBody
+        }
+    }
+
+    private var classicBody: some View {
         VStack(spacing: 0) {
             List(filteredTracks) { item in
                 let artworkURL = viewModel.artworkURL(for: item.id, size: 80)
@@ -50,7 +60,10 @@ struct TracksView: View {
                             .foregroundColor(viewModel.isTrackFavorite(item.id) ? .red : .secondary)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .padding(.trailing, 6)
+
+                    // Download
+                    trackDownloadButton(for: item)
+                        .padding(.trailing, 4)
                     
                     if viewModel.currentlyPlayingItem?.id == item.id {
                         // Indicate currently playing
@@ -73,9 +86,10 @@ struct TracksView: View {
                         let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
                         let playing = viewModel.isPlaying && isCurrent
                         Image(systemName: playing ? "pause.fill" : "play.fill")
-                            .foregroundColor(.accentColor)
+                            .frame(width: 30, height: 30)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                 }
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
@@ -84,7 +98,53 @@ struct TracksView: View {
                 }
             }
             .listStyle(.plain)
+            .contentMargins(.bottom, 100)
+            #if os(iOS)
+            .hidesMiniPlayerOnScroll()
+            #endif
+            .refreshable {
+                await viewModel.fetchAllLibraryData()
+            }
         }
         .navigationTitle("Brani")
+    }
+
+    @ViewBuilder
+    private func trackDownloadButton(for item: AudioItem) -> some View {
+        let state = downloadManager.downloadStates[item.Id] ?? .notDownloaded
+        switch state {
+        case .notDownloaded:
+            Button {
+                viewModel.downloadTrack(item)
+            } label: {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+        case .downloading(let progress):
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 2)
+                    .frame(width: 18, height: 18)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .frame(width: 18, height: 18)
+                    .rotationEffect(.degrees(-90))
+            }
+            .onTapGesture {
+                viewModel.removeDownload(for: item.Id)
+            }
+        case .downloaded:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundColor(.accentColor)
+                .contextMenu {
+                    Button(role: .destructive) {
+                        viewModel.removeDownload(for: item.Id)
+                    } label: {
+                        Label("Rimuovi download", systemImage: "trash")
+                    }
+                }
+        }
     }
 }

@@ -1,14 +1,22 @@
 import SwiftUI
 import AVKit
 
+#if os(macOS)
 struct AirPlayView: NSViewRepresentable {
     func makeNSView(context: Context) -> AVRoutePickerView {
-        let routePickerView = AVRoutePickerView()
-        // Su macOS non sono necessarie altre configurazioni
-        return routePickerView
+        AVRoutePickerView()
     }
 
-    func updateNSView(_ nsView: AVRoutePickerView, context: Context) {
-        // Nessun aggiornamento necessario
-    }
+    func updateNSView(_ nsView: AVRoutePickerView, context: Context) {}
 }
+#else
+import UIKit
+
+struct AirPlayView: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        AVRoutePickerView()
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+#endif

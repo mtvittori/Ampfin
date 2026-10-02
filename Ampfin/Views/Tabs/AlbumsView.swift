@@ -2,6 +2,8 @@
 import SwiftUI
 
 struct AlbumsView: View {
+    @ObservedObject private var colorManager = AccentColorManager.shared
+    @Environment(\.zunePivotHeaderHeight) private var pivotHeader
     @EnvironmentObject var viewModel: JellyfinViewModel
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 20)]
     
@@ -20,6 +22,21 @@ struct AlbumsView: View {
     }
 
     var body: some View {
+        if pivotHeader > 0 {
+            ZuneAlbumsView(albums: displayedAlbums)
+        } else if colorManager.zuneStyleEnabled {
+            NavigationStack {
+                ZuneAlbumsView(albums: displayedAlbums)
+                    .navigationDestination(for: AlbumItem.self) { album in
+                        AlbumTracksListView(album: album)
+                    }
+            }
+        } else {
+            classicBody
+        }
+    }
+
+    private var classicBody: some View {
         NavigationStack {
             // Usare ScrollView + LazyVGrid evita che l'intera riga di List venga selezionata
             ScrollView {
@@ -38,18 +55,25 @@ struct AlbumsView: View {
                                 NavigationLink(destination: AlbumTracksListView(album: album)) {
                                     AlbumGridItemView(album: album, artworkURL: viewModel.artworkURL(for: album.id, size: 300))
                                         .frame(minWidth: 140, minHeight: 160)
+                                        .drawingGroup()
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
-                        .padding(.horizontal)
-                        .padding(.top)
-                        .padding(.bottom, 40) // lascia spazio per eventuale player overlay
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 100) // lascia spazio per mini player overlay
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
             .background(Color.clear)
+            #if os(iOS)
+            .hidesMiniPlayerOnScroll()
+            #endif
+            .refreshable {
+                await viewModel.fetchAllLibraryData()
+            }
             .navigationTitle("Album")
             // Manteniamo la navigationDestination per compatibilità con altre parti dell'app
             .navigationDestination(for: AlbumItem.self) { album in

@@ -1,3 +1,4 @@
+#if os(macOS)
 import Cocoa
 import SwiftUI
 import Combine
@@ -82,3 +83,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
+#endif

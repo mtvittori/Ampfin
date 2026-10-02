@@ -3,6 +3,13 @@ import SwiftUI
 
 struct ArtistsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var colorManager = AccentColorManager.shared
+    @Environment(\.zunePivotHeaderHeight) private var pivotHeader
+
+    /// Row at the top of the list; its artist's photo fills the background.
+    @State private var scrolledID: String?
+    @State private var backdropArtist: ArtistItem?
+    @State private var path = NavigationPath()
 
     // Use global search query to filter artists
     private var displayedArtists: [ArtistItem] {
@@ -18,13 +25,26 @@ struct ArtistsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List(displayedArtists) { artist in
-                NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
-                    Text(artist.Name)
+        // In the pivot the root owns the navigation stack and its destinations.
+        if pivotHeader > 0 {
+            zuneList
+        } else {
+            stackBody
+        }
+    }
+
+    private var stackBody: some View {
+        NavigationStack(path: $path) {
+            Group {
+                if colorManager.zuneStyleEnabled {
+                    zuneList
+                } else {
+                    classicList
                 }
             }
-            .navigationTitle("Artisti")
+            .refreshable {
+                await viewModel.fetchAllLibraryData()
+            }
             .navigationDestination(for: ArtistItem.self) { artist in
                 ArtistAlbumsView(artist: artist)
             }
@@ -32,5 +52,141 @@ struct ArtistsView: View {
                 AlbumTracksListView(album: album)
             }
         }
+        #if DEBUG
+        // Test-only: `-provaArtista <name>` opens that artist's page.
+        .task(id: viewModel.artists.count) {
+            if path.isEmpty, let name = UserDefaults.standard.string(forKey: "provaArtista"),
+               let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+                path.append(artist)
+            }
+        }
+        #endif
+    }
+
+    private var classicList: some View {
+        List(displayedArtists) { artist in
+            NavigationLink(value: artist) {
+                Text(artist.Name)
+            }
+        }
+        .navigationTitle("Artisti")
+    }
+
+    // MARK: - Zune
+
+    private var zuneList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ZunePageTitle(text: "artisti")
+                    .id("header")
+
+                ForEach(letterGroups, id: \.letter) { group in
+                    letterTile(group.letter)
+                        .id("letter-\(group.letter)")
+
+                    ForEach(group.artists) { artist in
+                        NavigationLink(value: artist) {
+                            artistRow(artist)
+                        }
+                        .buttonStyle(.plain)
+                        .id(artist.Id)
+                    }
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, 20)
+            .padding(.bottom, 120)
+        }
+        .scrollPosition(id: $scrolledID, anchor: .top)
+        .zuneBackdrop(urls: backdropArtist.map { viewModel.artistImageURLs(for: $0) } ?? [], dim: 0.55)
+        #if os(iOS)
+        .hidesMiniPlayerOnScroll()
+        #endif
+        .zuneChrome()
+        // Wait for the list to settle before swapping the photo, so a fast fling
+        // doesn't download every artist it passes.
+        .task(id: scrolledID) {
+            if backdropArtist != nil {
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { return }
+            }
+            backdropArtist = artistForBackdrop()
+        }
+        .onChange(of: viewModel.artists.count) {
+            if backdropArtist == nil { backdropArtist = artistForBackdrop() }
+        }
+    }
+
+    private func artistRow(_ artist: ArtistItem) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(artist.Name.lowercased())
+                .font(.zune(30, .light, relativeTo: .title))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            if let genres = artist.Genres, !genres.isEmpty {
+                Text(genres.prefix(2).joined(separator: " · ").lowercased())
+                    .font(.zune(14, .regular, relativeTo: .caption))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+
+    /// Accent-colored square with the initial, like the Zune jump list.
+    private func letterTile(_ letter: String) -> some View {
+        Text(letter.lowercased())
+            .font(.zune(34, .light, relativeTo: .title))
+            .foregroundStyle(.white)
+            .frame(width: 54, height: 54, alignment: .bottomLeading)
+            .padding(.leading, 6)
+            .padding(.bottom, 2)
+            .frame(width: 60, height: 60, alignment: .bottomLeading)
+            .background(Color.accentColor)
+            .padding(.top, 18)
+            .padding(.bottom, 6)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private struct LetterGroup {
+        let letter: String
+        var artists: [ArtistItem]
+    }
+
+    /// Consecutive artists grouped by initial; digits and symbols go under "#".
+    private var letterGroups: [LetterGroup] {
+        var groups: [LetterGroup] = []
+        for artist in displayedArtists {
+            let letter = Self.initial(of: artist.Name)
+            if groups.last?.letter == letter {
+                groups[groups.count - 1].artists.append(artist)
+            } else {
+                groups.append(LetterGroup(letter: letter, artists: [artist]))
+            }
+        }
+        return groups
+    }
+
+    /// Initial as the server sorts it: "The 1975" files under "#", not "t".
+    private static func initial(of name: String) -> String {
+        var key = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+        if key.hasPrefix("the ") { key.removeFirst(4) }
+        guard let first = key.first,
+              first.isLetter else { return "#" }
+        return String(first).uppercased()
+    }
+
+    /// The artist at the top of the list, or the first one under a letter tile.
+    private func artistForBackdrop() -> ArtistItem? {
+        let artists = displayedArtists
+        guard let id = scrolledID else { return artists.first }
+        if let artist = artists.first(where: { $0.Id == id }) { return artist }
+        if id.hasPrefix("letter-") {
+            let letter = String(id.dropFirst("letter-".count))
+            return artists.first { Self.initial(of: $0.Name) == letter }
+        }
+        return artists.first
     }
 }

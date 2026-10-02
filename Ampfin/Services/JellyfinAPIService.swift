@@ -18,8 +18,63 @@ enum APIError: Error, LocalizedError {
     }
 }
 
+// URLSession delegate that accepts all TLS certificates (self-signed, expired, etc.)
+// Used for Jellyfin servers with custom certificates.
+// Conforms to URLSessionTaskDelegate to handle per-task auth challenges as well.
+private class TrustAllCertsDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+    // Session-level challenge
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    // Task-level challenge (used by data tasks, download tasks, etc.)
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        handleChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    private func handleChallenge(
+        _ challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let serverTrust = challenge.protectionSpace.serverTrust {
+            // Accept all server certificates unconditionally
+            SecTrustSetExceptions(serverTrust, SecTrustCopyExceptions(serverTrust))
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
 class JellyfinAPIService {
     
+    /// Shared URLSession that bypasses TLS certificate validation.
+    /// Use this for all network requests to the Jellyfin server.
+    static let urlSession: URLSession = {
+        let delegate = TrustAllCertsDelegate()
+        let config = URLSessionConfiguration.default
+        config.tlsMinimumSupportedProtocolVersion = .TLSv12
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }()
+
+    private static var deviceName: String {
+        #if os(macOS)
+        "macOS"
+        #else
+        "iOS"
+        #endif
+    }
+
     /// Stable per-install device id: Jellyfin ties sessions and tokens to it,
     /// so a fresh UUID on every request spawns a new "device" each time.
     private static let deviceId: String = {
@@ -57,13 +112,13 @@ class JellyfinAPIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\""
+        let authHeader = "MediaBrowser Client=\"amplifin\", Device=\"\(JellyfinAPIService.deviceName)\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         
         struct LoginRequest: Codable { let Username: String; let Pw: String }
         request.httpBody = try JSONEncoder().encode(LoginRequest(Username: username, Pw: password))
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -82,16 +137,30 @@ class JellyfinAPIService {
 
     // MARK: - Data Fetching
     
-    /// Fetches recently played albums for the current user
-    func fetchRecentlyPlayedAlbums() async throws -> [AlbumItem] {
-        // Step 1: Fetch the user's music library id
+    /// Fetches recently played tracks for the current user
+    func fetchRecentlyPlayedTracks() async throws -> [AudioItem] {
         let libraryId = try await fetchMusicLibraryId()
-        // Step 2: Fetch recently played albums only within the music library
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
-        let response: AlbumResponse = try await fetch(endpoint: endpoint)
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
+        let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
-    
+
+    /// Marks an item as played for the current user, which updates its LastPlayedDate
+    /// on the server — this is what powers "recently played" queries (SortBy=DatePlayed).
+    func markItemPlayed(itemId: String) async throws {
+        guard let url = URL(string: "\(serverUrl)/Users/\(userId)/PlayedItems/\(itemId)") else {
+            throw APIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+
     /// Fetches recently added albums (ordered by DateAdded descending).
     /// Named as requested: fetchRecentAddedAlbums()
     func fetchRecentAddedAlbums() async throws -> [AlbumItem] {
@@ -159,8 +228,18 @@ class JellyfinAPIService {
         return URL(string: "\(serverUrl)/Items/\(itemId)/Images/Primary?maxHeight=\(size)&maxWidth=\(size)&quality=90&tag=&api_key=\(token)")
     }
     
+    /// Any image of an item, e.g. `Primary` or `Backdrop/0` for an artist photo.
+    func imageURL(for itemId: String, type: String, maxWidth: Int) -> URL? {
+        return URL(string: "\(serverUrl)/Items/\(itemId)/Images/\(type)?maxWidth=\(maxWidth)&quality=85&api_key=\(token)")
+    }
+
     func streamURL(for itemId: String) -> URL? {
         return URL(string: "\(serverUrl)/Audio/\(itemId)/stream?static=true&api_key=\(token)")
+    }
+
+    /// Returns a transcoded stream URL with the specified max bitrate (in kbps).
+    func transcodedStreamURL(for itemId: String, maxBitrate: Int) -> URL? {
+        return URL(string: "\(serverUrl)/Audio/\(itemId)/stream?audioBitRate=\(maxBitrate * 1000)&audioCodec=aac&static=false&api_key=\(token)")
     }
 
     // MARK: - Generic Fetch Helper
@@ -173,7 +252,7 @@ class JellyfinAPIService {
         var request = URLRequest(url: url)
         addAuthHeader(to: &request)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -190,7 +269,7 @@ class JellyfinAPIService {
     }
     
     private func addAuthHeader(to request: inout URLRequest) {
-        let authHeader = "MediaBrowser Client=\"Ampfin\", Device=\"macOS\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\", Token=\"\(token)\""
+        let authHeader = "MediaBrowser Client=\"amplifin\", Device=\"\(JellyfinAPIService.deviceName)\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\", Token=\"\(token)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }

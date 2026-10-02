@@ -6,8 +6,18 @@ struct ArtistInfo: Codable {
     let Id: String
 }
 
+struct MediaStreamInfo: Codable {
+    let BitRate: Int?
+    let SampleRate: Int?
+    let Channels: Int?
+    let Codec: String?
+    let BitDepth: Int?
+}
+
 struct MediaSourceInfo: Codable {
     let Container: String?
+    let Bitrate: Int?
+    let MediaStreams: [MediaStreamInfo]?
 }
 
 struct AudioItem: Codable, Identifiable {

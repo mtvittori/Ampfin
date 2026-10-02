@@ -1,12 +1,24 @@
 import SwiftUI
-import Cocoa
+
+// Environment key for mini player visibility binding
+private struct MiniPlayerVisibleKey: EnvironmentKey {
+    static let defaultValue: Binding<Bool> = .constant(true)
+}
+
+extension EnvironmentValues {
+    var miniPlayerVisible: Binding<Bool> {
+        get { self[MiniPlayerVisibleKey.self] }
+        set { self[MiniPlayerVisibleKey.self] = newValue }
+    }
+}
 
 struct ContentView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var colorManager = AccentColorManager.shared
 
-    // Sidebar selection
+    // Sidebar / Tab selection
     enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-        case home, tracks, albums, artists, genres, playlists, favorites
+        case home, tracks, albums, artists, genres, playlists, favorites, settings, search
 
         var id: String { rawValue }
 
@@ -19,6 +31,8 @@ struct ContentView: View {
             case .genres: return "Generi"
             case .playlists: return "Playlist"
             case .favorites: return "Preferiti"
+            case .settings: return "Impostazioni"
+            case .search: return "Cerca"
             }
         }
 
@@ -31,147 +45,295 @@ struct ContentView: View {
             case .genres: return "guitars.fill"
             case .playlists: return "music.note.list"
             case .favorites: return "heart.fill"
+            case .settings: return "gearshape"
+            case .search: return "magnifyingglass"
             }
         }
     }
 
     @State private var selectedSidebar: SidebarItem? = .home
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showFullPlayer: Bool = false
+    @State private var miniPlayerVisible: Bool = true
 
     var body: some View {
         if !viewModel.isLoggedIn {
             LoginView()
+                #if os(macOS)
                 .frame(minWidth: 800, minHeight: 600)
+                #endif
                 .onAppear {
                     print("[ContentView] Showing LoginView (user NOT logged in)")
                 }
         } else {
-            GeometryReader { geometry in
-                ZStack(alignment: .bottom) {
-                    Color.clear
-                        .background(.ultraThinMaterial)
-                        .ignoresSafeArea()
+            #if os(macOS)
+            macOSContent
+            #else
+            iOSContent
+            #endif
+        }
+    }
 
-                    NavigationSplitView(columnVisibility: $columnVisibility) {
-                        // Sidebar
-                        List(selection: $selectedSidebar) {
-                            ForEach(SidebarItem.allCases) { item in
-                                Label(item.title, systemImage: item.systemImage)
-                                    .tag(item)
-                                    .onTapGesture {
-                                        selectedSidebar = item
-                                    }
-                            }
-                        }
-                        .listStyle(.sidebar)
-                        .frame(minWidth: 160)
-                    } detail: {
-                        // Detail column — show the selected view
-                        Group {
-                            switch selectedSidebar {
-                            case .home, .none:
-                                HomeView()
-                            case .tracks:
-                                TracksView()
-                            case .albums:
-                                AlbumsView()
-                            case .artists:
-                                ArtistsView()
-                            case .genres:
-                                GenresView()
-                            case .playlists:
-                                GeneratedPlaylistsView()
-                            case .favorites:
-                                FavoritesView()
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .frame(minWidth: 800, minHeight: 600)
+    // MARK: - macOS Layout
 
-                    // Player overlay (unchanged)
-                    if let playingItem = viewModel.currentlyPlayingItem {
-                        MusicPlayerView(
-                            item: playingItem,
-                            isPlaying: viewModel.isPlaying,
-                            currentTime: viewModel.currentTime,
-                            duration: playingItem.duration ?? 0,
-                            artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
-                            onPlayPause: { viewModel.playerManager.togglePlayPause() },
-                            onBackward: { viewModel.playerManager.backward() },
-                            onForward: { viewModel.playerManager.forward() },
-                            onSeek: { time in viewModel.playerManager.seek(to: time) }
-                        )
-                        .padding(.horizontal)
-                        .padding(.bottom, 20)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-            }
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
-            .frame(minWidth: 800, minHeight: 600)
-            .task {
-                print("[ContentView] .task triggered, audioItems count = \(viewModel.audioItems.count)")
-                if viewModel.audioItems.isEmpty {
-                    print("[ContentView] audioItems is empty, fetching library data...")
-                    await viewModel.fetchAllLibraryData()
-                    print("[ContentView] fetchAllLibraryData completed, audioItems count = \(viewModel.audioItems.count)")
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 16)
-
-                            ZStack {
-                                HStack(spacing: 8) {
-                                    TextField("Cerca...", text: $viewModel.globalSearchQuery)
-                                        .textFieldStyle(.plain)
-                                        .submitLabel(.search)
-                                        .padding(.vertical, 6)
-                                        .padding(.leading, 6)
-
-                                    if !viewModel.globalSearchQuery.isEmpty {
-                                        Button(action: { viewModel.globalSearchQuery = "" }) {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .padding(.trailing, 6)
-                                    }
+    #if os(macOS)
+    private var macOSContent: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    List(selection: $selectedSidebar) {
+                        ForEach(SidebarItem.allCases.filter { $0 != .search }) { item in
+                            Label(item.title, systemImage: item.systemImage)
+                                .tag(item)
+                                .onTapGesture {
+                                    selectedSidebar = item
                                 }
-                                .padding(.horizontal, 6)
-                            }
-                            .frame(width: 360, height: 34)
                         }
                     }
-                    .frame(maxWidth: .infinity)
-                }
-
-                ToolbarItem(placement: .automatic) {
-                    Button {
-                        print("[ContentView] Toolbar refresh tapped")
-                        Task {
-                            await viewModel.fetchAllLibraryData()
-                            print("[ContentView] Toolbar fetch completed, audioItems count = \(viewModel.audioItems.count)")
-                        }
-                    } label: {
-                        Label("Aggiorna", systemImage: "arrow.clockwise")
+                    .listStyle(.sidebar)
+                    .frame(minWidth: 160)
+                } detail: {
+                    Group {
+                        detailView(for: selectedSidebar)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .frame(minWidth: 800, minHeight: 600)
 
-                ToolbarItem(placement: .automatic) {
-                    Button(action: { viewModel.logout() }) {
-                        Label("Logout", systemImage: "person.crop.circle.badge.xmark")
-                    }
+                macOSPlayerOverlay
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
+        .frame(minWidth: 800, minHeight: 600)
+        .task { await loadLibraryIfNeeded() }
+        // HIG (Search fields: iPadOS, macOS): "Put a search field at the trailing side
+        // of the toolbar." `.searchable(placement: .toolbar)` does exactly that natively
+        // (trailing toolbar on macOS) instead of a hand-rolled, centered TextField.
+        .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca...")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    Task { await viewModel.fetchAllLibraryData() }
+                } label: {
+                    Label("Aggiorna", systemImage: "arrow.clockwise")
+                }
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button(action: { viewModel.logout() }) {
+                    Label("Logout", systemImage: "person.crop.circle.badge.xmark")
                 }
             }
         }
     }
 
+    @ViewBuilder
+    private var macOSPlayerOverlay: some View {
+        if let playingItem = viewModel.currentlyPlayingItem {
+            MusicPlayerView(
+                item: playingItem,
+                isPlaying: viewModel.isPlaying,
+                currentTime: viewModel.currentTime,
+                duration: playingItem.duration ?? 0,
+                artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
+                onPlayPause: { viewModel.playerManager.togglePlayPause() },
+                onBackward: { viewModel.playerManager.backward() },
+                onForward: { viewModel.playerManager.forward() },
+                onSeek: { time in viewModel.playerManager.seek(to: time) }
+            )
+            // Without a max width, the seek Slider inside greedily fills the HStack,
+            // stretching the bar edge-to-edge on wide windows instead of staying a
+            // compact, centered pill (as in macOS Music's own now-playing bar).
+            .frame(maxWidth: 720)
+            .padding(.horizontal)
+            .padding(.bottom, 20)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+    #endif
+
+    // MARK: - iOS Layout
+
+    #if os(iOS)
+    @State private var selectedTab: SidebarItem = .home
+
+    private var iOSContent: some View {
+        ZStack {
+            // Main tab content
+            // Zune: Windows Phone pivot instead of the tab bar.
+            Group {
+                if colorManager.zuneStyleEnabled {
+                    ZunePivotView(selection: $selectedTab)
+                } else {
+                    TabView(selection: $selectedTab) {
+                        Tab(SidebarItem.home.title, systemImage: SidebarItem.home.systemImage, value: .home) {
+                            NavigationStack {
+                                HomeView()
+                                    .iOSToolbar(viewModel: viewModel)
+                            }
+                        }
+
+                        Tab(SidebarItem.tracks.title, systemImage: SidebarItem.tracks.systemImage, value: .tracks) {
+                            NavigationStack {
+                                TracksView()
+                                    .iOSToolbar(viewModel: viewModel)
+                            }
+                        }
+
+                        Tab(SidebarItem.albums.title, systemImage: SidebarItem.albums.systemImage, value: .albums) {
+                            NavigationStack {
+                                AlbumsView()
+                                    .iOSToolbar(viewModel: viewModel)
+                            }
+                        }
+
+                        Tab(SidebarItem.artists.title, systemImage: SidebarItem.artists.systemImage, value: .artists) {
+                            NavigationStack {
+                                ArtistsView()
+                                    .iOSToolbar(viewModel: viewModel)
+                            }
+                        }
+
+                        Tab(value: .search, role: .search) {
+                            NavigationStack {
+                                SearchResultsView(query: $viewModel.globalSearchQuery)
+                                    .environmentObject(viewModel)
+                                    .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
+                            }
+                        }
+                    }
+                }
+            }
+            .environment(\.miniPlayerVisible, $miniPlayerVisible)
+
+            // Player layer
+            if let playingItem = viewModel.currentlyPlayingItem {
+                ZStack {
+                    if !showFullPlayer {
+                        // Mini player bar
+                        VStack(spacing: 0) {
+                            Spacer()
+                            MusicPlayerView(
+                                item: playingItem,
+                                isPlaying: viewModel.isPlaying,
+                                currentTime: viewModel.currentTime,
+                                duration: playingItem.duration ?? 0,
+                                artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
+                                onPlayPause: { viewModel.playerManager.togglePlayPause() },
+                                onBackward: { viewModel.playerManager.backward() },
+                                onForward: { viewModel.playerManager.forward() },
+                                onSeek: { time in viewModel.playerManager.seek(to: time) }
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                                    showFullPlayer = true
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            // No tab bar under the pivot.
+                            .padding(.bottom, colorManager.zuneStyleEnabled ? 4 : 56)
+                        }
+                        .offset(y: miniPlayerVisible ? 0 : 200)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        // Full player — its own Liquid Glass elements materialize in place
+                        // (no shape-morph from the mini bar; see NowPlayingFullView doc comment).
+                        NowPlayingFullView(
+                            item: playingItem,
+                            isPlaying: viewModel.isPlaying,
+                            currentTime: viewModel.currentTime,
+                            duration: playingItem.duration ?? 0,
+                            artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 600),
+                            onPlayPause: { viewModel.playerManager.togglePlayPause() },
+                            onBackward: { viewModel.playerManager.backward() },
+                            onForward: { viewModel.playerManager.forward() },
+                            onSeek: { time in viewModel.playerManager.seek(to: time) },
+                            isExpanded: $showFullPlayer
+                        )
+                        .glassEffectTransition(.materialize)
+                        .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.88), value: showFullPlayer)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: miniPlayerVisible)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
+        .task { await loadLibraryIfNeeded() }
+        // Zune was a dark-first design: the photos and white type need it.
+        .preferredColorScheme(colorManager.zuneStyleEnabled ? .dark : nil)
+        #if DEBUG
+        .task { await applyTestLaunchArguments() }
+        #endif
+    }
+
+    #if DEBUG
+    /// Test-only launch arguments, to photograph screens on the phone from the Mac:
+    /// `-provaScheda artists` opens a tab; `-provaPlay <artist>` starts that artist,
+    /// pauses straight away and opens the full player.
+    private func applyTestLaunchArguments() async {
+        let defaults = UserDefaults.standard
+        if let tab = defaults.string(forKey: "provaScheda").flatMap(SidebarItem.init(rawValue:)) {
+            selectedTab = tab
+        }
+        guard let name = defaults.string(forKey: "provaPlay") else { return }
+        for _ in 0..<60 where viewModel.audioItems.isEmpty {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }),
+              let first = viewModel.tracks(byArtist: artist).first else { return }
+        viewModel.playerManager.play(item: first, in: viewModel.tracks(byArtist: artist))
+        try? await Task.sleep(for: .seconds(1))
+        viewModel.playerManager.togglePlayPause()
+        showFullPlayer = true
+    }
+    #endif
+    #endif
+
+    // MARK: - Shared
+
+    @ViewBuilder
+    private func detailView(for item: SidebarItem?) -> some View {
+        switch item {
+        case .home, .none:
+            HomeView()
+        case .tracks:
+            TracksView()
+        case .albums:
+            AlbumsView()
+        case .artists:
+            ArtistsView()
+        case .genres:
+            GenresView()
+        case .playlists:
+            GeneratedPlaylistsView()
+        case .favorites:
+            FavoritesView()
+        case .settings:
+            SettingsView()
+        case .search:
+            SearchResultsView(query: $viewModel.globalSearchQuery)
+        }
+    }
+
+    private func loadLibraryIfNeeded() async {
+        // If in-memory data is empty, try loading from disk cache first
+        if viewModel.audioItems.isEmpty {
+            let cacheLoaded = await viewModel.loadLibraryFromCacheIfAvailable()
+            if !cacheLoaded {
+                // No cache — must fetch from API
+                await viewModel.fetchAllLibraryData()
+                return
+            }
+        }
+        // If cache is stale, refresh from API in background (UI already populated)
+        if viewModel.isLibraryCacheStale() {
+            await viewModel.fetchAllLibraryData()
+        }
+    }
+
+    #if os(macOS)
     private func toggleSidebarVisibility() {
         switch columnVisibility {
         case .all:
@@ -184,4 +346,68 @@ struct ContentView: View {
             columnVisibility = .all
         }
     }
+    #endif
 }
+
+// MARK: - iOS Toolbar Modifier
+
+#if os(iOS)
+private struct IOSToolbarModifier: ViewModifier {
+    @ObservedObject var viewModel: JellyfinViewModel
+    @ObservedObject private var colorManager = AccentColorManager.shared
+
+    func body(content: Content) -> some View {
+        content
+            // Zune screens draw their own giant title.
+            .navigationTitle(colorManager.zuneStyleEnabled ? "" : "amplifin")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
+                        Image(systemName: "heart.fill")
+                    }
+
+                    NavigationLink(destination: SettingsView().environmentObject(viewModel)) {
+                        Image(systemName: "gearshape")
+                    }
+
+                    Button(action: { viewModel.logout() }) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func iOSToolbar(viewModel: JellyfinViewModel) -> some View {
+        modifier(IOSToolbarModifier(viewModel: viewModel))
+    }
+}
+
+/// Modifier that hides the mini player when the user scrolls down and shows it when scrolling up.
+struct ScrollHidesMiniPlayer: ViewModifier {
+    @Environment(\.miniPlayerVisible) var miniPlayerVisible
+    @State private var lastOffset: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y
+            } action: { oldOffset, newOffset in
+                let delta = newOffset - lastOffset
+                // Only react to meaningful scroll movements
+                if abs(delta) > 4 {
+                    let scrollingDown = delta > 0 && newOffset > 0
+                    miniPlayerVisible.wrappedValue = !scrollingDown
+                    lastOffset = newOffset
+                }
+            }
+    }
+}
+
+extension View {
+    func hidesMiniPlayerOnScroll() -> some View {
+        modifier(ScrollHidesMiniPlayer())
+    }
+}
+#endif

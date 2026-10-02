@@ -1,18 +1,53 @@
-// In Ampfin/App/JellyfinMusicApp.swift
-
+#if os(macOS)
 import SwiftUI
 import Cocoa
 
 @main
 struct JellyfinMusicApp: App {
     @StateObject private var viewModel = JellyfinViewModel()
+    @ObservedObject private var colorManager = AccentColorManager.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(viewModel)
+                .tint(colorManager.hasCustomColor ? colorManager.accentColor : nil)
                 .onAppear { appDelegate.viewModel = viewModel }
         }
     }
 }
+#else
+import SwiftUI
+import UIKit
+import CarPlay
+
+class AmpfinAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if connectingSceneSession.role.rawValue == "CPTemplateApplicationSceneSessionRoleApplication" {
+            let config = UISceneConfiguration(name: "AmpfinCarPlayConfiguration", sessionRole: connectingSceneSession.role)
+            config.delegateClass = CarPlaySceneDelegate.self
+            return config
+        }
+        let config = UISceneConfiguration(name: "Default", sessionRole: connectingSceneSession.role)
+        return config
+    }
+}
+
+@main
+struct JellyfinMusicApp: App {
+    @UIApplicationDelegateAdaptor(AmpfinAppDelegate.self) var appDelegate
+    @StateObject private var viewModel = JellyfinViewModel()
+    @ObservedObject private var colorManager = AccentColorManager.shared
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environmentObject(viewModel)
+                .tint(colorManager.hasCustomColor ? colorManager.accentColor : nil)
+        }
+    }
+}
+#endif

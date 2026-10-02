@@ -6,6 +6,9 @@ struct ArtistItem: Codable, Identifiable, Hashable {
     var id: String { Id }
     let Name: String
     let Genres: [String]?
+    // Optional so library caches written before these fields existed still decode.
+    let ImageTags: [String: String]?
+    let BackdropImageTags: [String]?
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(Id)
