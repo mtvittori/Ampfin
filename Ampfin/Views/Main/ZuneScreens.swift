@@ -129,13 +129,15 @@ struct ZuneTracksView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let tracks: [AudioItem]
 
-    @State private var scrolledID: String?
+    @State private var topRow = ZuneTopRowTracker()
     @State private var backdropTrack: AudioItem?
 
     var body: some View {
         ZuneScreen(title: "brani",
                    backdropURLs: backdropTrack.map { viewModel.artistImageURLs(for: $0) } ?? [],
-                   scrolledID: $scrolledID) {
+                   scrolledID: topRow.binding { id in
+                       backdropTrack = id.flatMap { id in tracks.first { $0.Id == id } } ?? backdropTrack
+                   }) {
             HStack(spacing: 24) {
                 Text("\(tracks.count) brani")
                     .font(.zune(17, .semilight, relativeTo: .subheadline))
@@ -162,13 +164,8 @@ struct ZuneTracksView: View {
         .refreshable {
             await viewModel.fetchAllLibraryData()
         }
-        .task(id: scrolledID) {
-            if backdropTrack != nil {
-                try? await Task.sleep(for: .milliseconds(400))
-                if Task.isCancelled { return }
-            }
-            backdropTrack = scrolledID.flatMap { id in tracks.first { $0.Id == id } }
-                ?? viewModel.currentlyPlayingItem ?? tracks.first
+        .onAppear {
+            if backdropTrack == nil { backdropTrack = viewModel.currentlyPlayingItem ?? tracks.first }
         }
         .onChange(of: tracks.count) {
             if backdropTrack == nil { backdropTrack = tracks.first }
@@ -183,7 +180,7 @@ struct ZuneAlbumsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let albums: [AlbumItem]
 
-    @State private var scrolledID: String?
+    @State private var topRow = ZuneTopRowTracker()
     @State private var backdropAlbum: AlbumItem?
     @State private var gridWidth: CGFloat = 0
 
@@ -197,7 +194,9 @@ struct ZuneAlbumsView: View {
     var body: some View {
         ZuneScreen(title: "album",
                    backdropURLs: backdropAlbum.map { viewModel.artistImageURLs(for: $0) } ?? [],
-                   scrolledID: $scrolledID) {
+                   scrolledID: topRow.binding { id in
+                       backdropAlbum = id.flatMap { id in albums.first { $0.Id == id } } ?? backdropAlbum
+                   }) {
             if albums.isEmpty {
                 ZuneNote(text: "nessun album trovato")
                     .padding(.horizontal, 20)
@@ -217,12 +216,8 @@ struct ZuneAlbumsView: View {
         .refreshable {
             await viewModel.fetchAllLibraryData()
         }
-        .task(id: scrolledID) {
-            if backdropAlbum != nil {
-                try? await Task.sleep(for: .milliseconds(400))
-                if Task.isCancelled { return }
-            }
-            backdropAlbum = scrolledID.flatMap { id in albums.first { $0.Id == id } } ?? albums.first
+        .onAppear {
+            if backdropAlbum == nil { backdropAlbum = albums.first }
         }
         .onChange(of: albums.count) {
             if backdropAlbum == nil { backdropAlbum = albums.first }

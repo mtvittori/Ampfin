@@ -191,7 +191,9 @@ struct ZuneScreen<Content: View>: View {
     let title: String
     let backdropURLs: [URL]
     var dim: Double = 0.55
-    var scrolledID: Binding<String?> = .constant(nil)
+    /// Only for pages that follow the top row; a constant binding here would keep
+    /// pulling the scroll view back while the finger drags it.
+    var scrolledID: Binding<String?>?
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -202,12 +204,48 @@ struct ZuneScreen<Content: View>: View {
             }
             .padding(.bottom, 140)
         }
-        .scrollPosition(id: scrolledID, anchor: .top)
+        .modifier(ZuneTopRowPosition(id: scrolledID))
         #if os(iOS)
         .hidesMiniPlayerOnScroll()
         #endif
         .zuneBackdrop(urls: backdropURLs, dim: dim)
         .zuneChrome()
+    }
+}
+
+private struct ZuneTopRowPosition: ViewModifier {
+    let id: Binding<String?>?
+
+    func body(content: Content) -> some View {
+        if let id {
+            content.scrollPosition(id: id, anchor: .top)
+        } else {
+            content
+        }
+    }
+}
+
+/// Follows the row at the top of a long list without re-rendering the list for
+/// every row that passes: the id is kept here, outside SwiftUI state, and only
+/// reported once scrolling has settled.
+@MainActor
+final class ZuneTopRowTracker {
+    private(set) var id: String?
+    private var settle: Task<Void, Never>?
+
+    func binding(onSettle: @escaping (String?) -> Void) -> Binding<String?> {
+        Binding(
+            get: { self.id },
+            set: { newValue in
+                self.id = newValue
+                self.settle?.cancel()
+                self.settle = Task {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !Task.isCancelled else { return }
+                    onSettle(newValue)
+                }
+            }
+        )
     }
 }
 
