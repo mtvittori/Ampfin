@@ -233,7 +233,8 @@ struct ContentView: View {
                             }
                         }
 
-                        Tab(value: .search, role: .search) {
+                        // Titled in Italian like the other tabs (untitled, iOS writes "Search").
+                        Tab("Cerca", systemImage: "magnifyingglass", value: .search, role: .search) {
                             // Zoom transitions from covers to their pages.
                             ZoomScope {
                                 NavigationStack {

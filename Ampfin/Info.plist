@@ -2,27 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>it</string>
 	<key>CFBundleDisplayName</key>
 	<string>amplifin</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>amplifin cerca server Jellyfin sulla tua rete locale.</string>
-	<key>NSBonjourServices</key>
+	<key>CFBundleLocalizations</key>
 	<array>
-		<string>_jellyfin._tcp</string>
+		<string>it</string>
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<key>UIBackgroundModes</key>
+	<key>NSBonjourServices</key>
 	<array>
-		<string>audio</string>
-		<string>bluetooth-central</string>
-		<string>processing</string>
-		<string>remote-notification</string>
-		<string>fetch</string>
+		<string>_jellyfin._tcp</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>amplifin cerca server Jellyfin sulla tua rete locale.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -42,5 +40,13 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>processing</string>
+		<string>remote-notification</string>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

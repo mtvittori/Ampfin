@@ -142,6 +142,9 @@ struct SettingsView: View {
                 Text("Stile Zune: nella riproduzione e negli artisti lo sfondo è la foto dell'artista, che scorre lenta dietro scritte giganti. Senza, lo sfondo è la copertina, sfocata o nitida.")
             }
 
+            // MARK: - Audio output
+            AudioOutputSection()
+
             // MARK: - Equalizer
             Section {
                 EqualizerView()
