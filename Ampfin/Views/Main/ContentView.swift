@@ -72,9 +72,9 @@ struct ContentView: View {
               let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 300),
               let image = await ZuneImageLoader.shared.firstImage(from: [url]),
               let color = image.averageColor() else { return }
-        withAnimation(.easeInOut(duration: 0.8)) {
-            colorManager.artworkAccent = color.legibleAccent()
-        }
+        // No animation: an animated tint redraws the whole app on every frame, and it
+        // ran exactly while the album page morphed its buttons, making them stutter.
+        colorManager.artworkAccent = color.legibleAccent()
     }
 
     @ViewBuilder
@@ -194,7 +194,8 @@ struct ContentView: View {
                                 NavigationStack {
                                     HomeView()
                                         .iOSToolbar(viewModel: viewModel,
-                                                    title: homeStyle == HomeStyle.appleMusic.rawValue ? "Home" : nil)
+                                                    title: homeStyle == HomeStyle.appleMusic.rawValue ? "Home" : nil,
+                                                    subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
                                 }
                             }
                         }
@@ -204,7 +205,8 @@ struct ContentView: View {
                             ZoomScope {
                                 NavigationStack {
                                     TracksView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Brani")
+                                        .iOSToolbar(viewModel: viewModel, title: "Brani",
+                                                    subtitle: countLabel(viewModel.audioItems.count, one: "brano", many: "brani"))
                                 }
                             }
                         }
@@ -214,7 +216,8 @@ struct ContentView: View {
                             ZoomScope {
                                 NavigationStack {
                                     AlbumsView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Album")
+                                        .iOSToolbar(viewModel: viewModel, title: "Album",
+                                                    subtitle: countLabel(viewModel.albums.count, one: "album", many: "album"))
                                 }
                             }
                         }
@@ -224,7 +227,8 @@ struct ContentView: View {
                             ZoomScope {
                                 NavigationStack {
                                     ArtistsView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Artisti")
+                                        .iOSToolbar(viewModel: viewModel, title: "Artisti",
+                                                    subtitle: countLabel(viewModel.artists.count, one: "artista", many: "artisti"))
                                 }
                             }
                         }
@@ -302,9 +306,14 @@ struct ContentView: View {
                             isExpanded: $showFullPlayer,
                             artworkNamespace: playerArtwork
                         ) }
-                        .glassEffectTransition(.materialize)
+                        // Classic slides as one sheet; materializing its glass pieces on top
+                        // of the slide flickered at the end. Zune keeps the materialize fade.
+                        .glassEffectTransition(colorManager.zuneStyleEnabled ? .materialize : .identity)
                         // Classic rises from the accessory like a sheet; Zune fades in.
                         .transition(colorManager.zuneStyleEnabled ? .opacity : .move(edge: .bottom))
+                        // Stays above the tabs while it slides out, instead of dropping behind
+                        // them for the last frames of the removal.
+                        .zIndex(1)
                     }
                 }
             }
@@ -374,6 +383,12 @@ struct ContentView: View {
         }
     }
 
+    /// "8.012 brani"; nil while the library is still loading.
+    private func countLabel(_ count: Int, one: String, many: String) -> String? {
+        guard count > 0 else { return nil }
+        return "\(count.formatted()) \(count == 1 ? one : many)"
+    }
+
     private func loadLibraryIfNeeded() async {
         // If in-memory data is empty, try loading from disk cache first
         if viewModel.audioItems.isEmpty {
@@ -412,6 +427,7 @@ struct ContentView: View {
 private struct IOSToolbarModifier: ViewModifier {
     @ObservedObject var viewModel: JellyfinViewModel
     var title: String? = nil
+    var subtitle: String? = nil
     @ObservedObject private var colorManager = AccentColorManager.shared
 
     // Same size as iOS 26's own toolbar groups: 44 pt tall, a 48 pt slot per icon.
@@ -427,6 +443,10 @@ private struct IOSToolbarModifier: ViewModifier {
         content
             // Zune screens draw their own giant title.
             .navigationTitle(colorManager.zuneStyleEnabled ? "" : (title ?? "amplifin"))
+            // Large bold title on the same row as the buttons, as in Photos on iOS 26.
+            .toolbarTitleDisplayMode(.inlineLarge)
+            // A second line under the title makes the bar taller, so the buttons aren't squeezed.
+            .modifier(OptionalSubtitle(text: colorManager.zuneStyleEnabled ? nil : subtitle))
             // One capsule of glass tinted with the accent (the playing album's color when
             // that option is on), at the size of iOS 26's toolbar groups. Logout lives in Settings.
             .toolbar {
@@ -450,9 +470,21 @@ private struct IOSToolbarModifier: ViewModifier {
     }
 }
 
+private struct OptionalSubtitle: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.navigationSubtitle(text)
+        } else {
+            content
+        }
+    }
+}
+
 extension View {
-    func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil) -> some View {
-        modifier(IOSToolbarModifier(viewModel: viewModel, title: title))
+    func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil, subtitle: String? = nil) -> some View {
+        modifier(IOSToolbarModifier(viewModel: viewModel, title: title, subtitle: subtitle))
     }
 }
 

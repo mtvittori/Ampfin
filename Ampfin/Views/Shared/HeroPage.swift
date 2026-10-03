@@ -174,42 +174,65 @@ struct HeroPlayControls: View {
     let onFavorite: () -> Void
 
     @Namespace private var glass
+    /// Shuffle melts into Play only while this album is actually playing: on pause it
+    /// comes back out. Local state changed inside `withAnimation`, so only these buttons
+    /// animate, as Apple's Liquid Glass morphing samples do.
+    @State private var merged = false
+    @State private var current = false
 
     var body: some View {
-        GlassEffectContainer(spacing: 14) {
+        GlassEffectContainer(spacing: 20) {
             HStack(spacing: 14) {
-                if !isCurrent {
+                if !merged {
                     circle("shuffle", label: "Casuale", action: onShuffle)
+                        .glassEffect(.regular.interactive(), in: .circle)
                         .glassEffectID("shuffle", in: glass)
+                        .glassEffectTransition(.matchedGeometry)
                 }
 
-                Button(action: isCurrent ? onTogglePause : onPlay) {
-                    Label(isCurrent ? (isPlaying ? "In riproduzione" : "In pausa") : "Play",
-                          systemImage: isCurrent ? (isPlaying ? "waveform" : "play.fill") : "play.fill")
-                        .font(.body.weight(.semibold))
-                        .symbolEffect(.variableColor.iterative, isActive: isCurrent && isPlaying)
-                        .contentTransition(.symbolEffect(.replace))
-                        .foregroundStyle(palette.isLight ? Color.white : Color.black)
-                        .frame(minWidth: 116)
-                        .padding(.horizontal, 18)
-                        .frame(height: 46)
-                        .glassEffect(.regular.tint(palette.foreground.opacity(0.92)).interactive(), in: .capsule)
-                        .glassEffectID("play", in: glass)
+                Button(action: current ? onTogglePause : onPlay) {
+                    HStack(spacing: 8) {
+                        Image(systemName: merged ? "waveform" : "play.fill")
+                            .symbolEffect(.variableColor.iterative, isActive: merged)
+                            .contentTransition(.symbolEffect(.replace))
+                        Text(merged ? "In riproduzione" : (current ? "Riprendi" : "Play"))
+                            .contentTransition(.interpolate)
+                    }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(palette.isLight ? Color.white : Color.black)
+                    .frame(minWidth: 116)
+                    .padding(.horizontal, 18)
+                    .frame(height: 46)
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint(isCurrent ? (isPlaying ? "Mette in pausa" : "Riprende") : "")
+                .glassEffect(.regular.tint(palette.foreground.opacity(0.92)).interactive(), in: .capsule)
+                .glassEffectID("play", in: glass)
+                .accessibilityHint(merged ? "Mette in pausa" : (current ? "Riprende" : ""))
 
                 if let isFavorite {
                     circle(isFavorite ? "heart.fill" : "heart",
                            label: isFavorite ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti",
                            action: onFavorite)
                         .symbolEffect(.bounce, value: isFavorite)
+                        .glassEffect(.regular.interactive(), in: .circle)
                         .glassEffectID("favorite", in: glass)
                 }
             }
             .frame(maxWidth: .infinity)
-            .animation(.bouncy(duration: 0.45), value: isCurrent)
-            .animation(.bouncy(duration: 0.45), value: isPlaying)
+        }
+        .onAppear {
+            current = isCurrent
+            merged = isCurrent && isPlaying
+        }
+        .onChange(of: isCurrent) { _, _ in update() }
+        .onChange(of: isPlaying) { _, _ in update() }
+    }
+
+    private func update() {
+        withAnimation(.bouncy(duration: 0.4)) {
+            current = isCurrent
+            merged = isCurrent && isPlaying
         }
     }
 
@@ -220,7 +243,7 @@ struct HeroPlayControls: View {
                 .foregroundStyle(palette.foreground)
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 46, height: 46)
-                .glassEffect(.regular.interactive(), in: .circle)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)

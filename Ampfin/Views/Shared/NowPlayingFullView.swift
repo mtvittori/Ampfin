@@ -100,9 +100,12 @@ struct NowPlayingFullView: View {
                     }
                     .onEnded { value in
                         if value.translation.height > 100 || value.predictedEndTranslation.height > 300 {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                            // Keep the drag offset: springing it back to 0 while the view slides
+                            // away made it jump up at the end of the close.
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.9)) {
                                 isExpanded = false
                             }
+                            return
                         }
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                             dragOffset = 0
