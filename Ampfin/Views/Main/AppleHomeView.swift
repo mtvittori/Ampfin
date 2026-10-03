@@ -20,6 +20,20 @@ enum HomeStyle: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which top bar the tabs use (Settings → Barra in alto).
+enum TopBarStyle: String, CaseIterable, Identifiable {
+    case system, ampfin
+
+    static let storageKey = "topBarStyle"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "Sistema"
+        case .ampfin: return "Ampfin"
+        }
+    }
+}
+
 struct AppleHomeView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
 
@@ -29,9 +43,13 @@ struct AppleHomeView: View {
         let album: AlbumItem
     }
 
+    /// Worked out when the library or the history changes, not at every redraw
+    /// (it shuffles the whole album list).
+    @State private var topPicks: [Pick] = []
+
     /// One card each from what you played, what you love and what just arrived,
     /// then a few you haven't heard in a while.
-    private var topPicks: [Pick] {
+    private func computePicks() -> [Pick] {
         var picks: [Pick] = []
         var used = Set<String>()
         func add(_ album: AlbumItem?, _ caption: String) {
@@ -120,6 +138,9 @@ struct AppleHomeView: View {
         #endif
         .refreshable {
             await viewModel.fetchAllLibraryData()
+        }
+        .task(id: "\(viewModel.albums.count)|\(viewModel.recentlyPlayedAlbums.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
+            topPicks = computePicks()
         }
         .task {
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()

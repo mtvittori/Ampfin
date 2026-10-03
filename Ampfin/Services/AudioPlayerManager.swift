@@ -124,40 +124,30 @@ final class AudioPlayerManager: ObservableObject {
             return
         }
 
-        // Download to temp file
-        let tempDir = FileManager.default.temporaryDirectory
-        let tempFile = tempDir.appendingPathComponent("ampfin_stream_\(item.Id).\(url.pathExtension.isEmpty ? "audio" : url.pathExtension)")
-
-        // Clean previous temp file
-        cleanupTempFile()
-
-        let request = URLRequest(url: url)
-        downloadTask = JellyfinAPIService.urlSession.dataTask(with: request) { [weak self] data, response, error in
-            guard let self, let data, error == nil else {
-                DispatchQueue.main.async {
-                    if self?.currentlyPlayingItem?.Id == item.Id {
-                        print("Download failed: \(error?.localizedDescription ?? "unknown")")
-                        self?.isPlaying = false
-                    }
-                }
+        // From the song cache when it's there (instant), otherwise downloaded straight
+        // to disk with top priority; skipped songs' downloads give way to this one.
+        let cache = AudioStreamCache.shared
+        let key = cache.key(itemId: item.Id, url: url)
+        cache.lowerPriority(exceptKey: key)
+        cache.fetch(url, key: key, urgent: true) { [weak self] file in
+            guard let self, self.currentlyPlayingItem?.Id == item.Id else { return }
+            guard let file else {
+                print("Download failed for \(item.Name)")
+                self.isPlaying = false
                 return
             }
-
-            do {
-                try data.write(to: tempFile, options: .atomic)
-                DispatchQueue.main.async {
-                    guard self.currentlyPlayingItem?.Id == item.Id else { return }
-                    self.currentTempFile = tempFile
-                    self.playAudioFile(at: tempFile)
-                }
-            } catch {
-                print("Failed to write temp file: \(error)")
-                DispatchQueue.main.async {
-                    self.isPlaying = false
-                }
-            }
+            self.playAudioFile(at: file)
+            self.prefetchNext()
         }
-        downloadTask?.resume()
+    }
+
+    /// Fetches the next song of the queue while this one plays, so "next" and the
+    /// automatic advance start without waiting.
+    private func prefetchNext() {
+        guard let next = upNext.first,
+              let url = streamURLProvider?(next.Id), !url.isFileURL else { return }
+        let cache = AudioStreamCache.shared
+        cache.prefetch(url, key: cache.key(itemId: next.Id, url: url))
     }
 
     private func playAudioFile(at url: URL) {

@@ -11,14 +11,21 @@ struct ArtistAlbumsView: View {
     }
 
     var body: some View {
-        if colorManager.zuneStyleEnabled {
-            zunePage
-        } else {
-            classicGrid
+        Group {
+            if colorManager.zuneStyleEnabled {
+                zunePage
+            } else {
+                classicGrid
+            }
+        }
+        .sheet(item: $infoTrack) { track in
+            ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)
+                .environmentObject(viewModel)
         }
     }
 
     @State private var showAllTracks = false
+    @State private var infoTrack: AudioItem?
 
     /// Apple Music-style page: the artist's photo edge to edge, fading into its color;
     /// top songs, then the albums as a strip of covers.
@@ -56,7 +63,8 @@ struct ArtistAlbumsView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(shown) { track in
                         HeroTrackRow(track: track, number: nil, detail: track.Album,
-                                     queue: tracks, palette: palette)
+                                     queue: tracks, palette: palette,
+                                     onInfo: { infoTrack = $0 })
                     }
                 }
                 .padding(.horizontal, 20)

@@ -23,38 +23,55 @@ struct SearchResultsView: View {
         }
     }
 
-    private var filteredTracks: [AudioItem] {
-        guard !query.isEmpty else { return [] }
-        let q = query.lowercased()
-        return viewModel.audioItems.filter {
-            $0.Name.lowercased().contains(q) ||
-            ($0.mainArtistName?.lowercased().contains(q) ?? false) ||
-            ($0.Album?.lowercased().contains(q) ?? false)
-        }
+    /// Results worked out once per search, off the main thread. They used to be
+    /// recomputed (8,000+ songs, several times) at every keystroke and every redraw.
+    @State private var results = Results()
+
+    private struct Results {
+        var query = ""
+        var tracks: [AudioItem] = []
+        var albums: [AlbumItem] = []
+        var artists: [ArtistItem] = []
     }
 
-    private var filteredAlbums: [AlbumItem] {
-        guard !query.isEmpty else { return [] }
-        let q = query.lowercased()
-        return viewModel.albums.filter {
-            $0.Name.lowercased().contains(q) ||
-            ($0.AlbumArtist?.lowercased().contains(q) ?? false)
-        }
-    }
+    private var filteredTracks: [AudioItem] { query.isEmpty ? [] : results.tracks }
+    private var filteredAlbums: [AlbumItem] { query.isEmpty ? [] : results.albums }
+    private var filteredArtists: [ArtistItem] { query.isEmpty ? [] : results.artists }
 
-    private var filteredArtists: [ArtistItem] {
-        guard !query.isEmpty else { return [] }
-        let q = query.lowercased()
-        return viewModel.artists.filter {
-            $0.Name.lowercased().contains(q)
+    private func search() async {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else {
+            results = Results()
+            return
         }
+        // A short pause, so fast typing doesn't search for every letter.
+        try? await Task.sleep(for: .milliseconds(120))
+        if Task.isCancelled { return }
+        let tracks = viewModel.audioItems, albums = viewModel.albums, artists = viewModel.artists
+        let found = await Task.detached(priority: .userInitiated) { () -> Results in
+            func has(_ text: String?) -> Bool {
+                text?.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            }
+            return Results(
+                query: q,
+                tracks: tracks.filter { has($0.Name) || has($0.mainArtistName) || has($0.Album) },
+                albums: albums.filter { has($0.Name) || has($0.AlbumArtist) },
+                artists: artists.filter { has($0.Name) }
+            )
+        }.value
+        if !Task.isCancelled { results = found }
     }
 
     var body: some View {
-        if colorManager.zuneStyleEnabled {
-            zuneBody
-        } else {
-            classicBody
+        Group {
+            if colorManager.zuneStyleEnabled {
+                zuneBody
+            } else {
+                classicBody
+            }
+        }
+        .task(id: "\(query)|\(viewModel.audioItems.count)|\(viewModel.artists.count)") {
+            await search()
         }
     }
 

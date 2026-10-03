@@ -6,6 +6,8 @@ struct AlbumTracksListView: View {
     let album: AlbumItem
 
     @State private var selectedTrackForInfo: AudioItem?
+    @State private var showAlbumInfo = false
+    @State private var showCoverPicker = false
     /// Rows cascade in only while the page opens, not when scrolled back into view.
     @State private var introRunning = true
     @ObservedObject private var colorManager = AccentColorManager.shared
@@ -22,7 +24,15 @@ struct AlbumTracksListView: View {
             await viewModel.fetchAlbumTracks(albumId: album.id)
         }
         .sheet(item: $selectedTrackForInfo) { track in
-            TrackInfoSheet(track: track, album: album)
+            ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)
+                .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $showAlbumInfo) {
+            ItemInfoSheet(itemId: album.Id, kind: .album, title: album.Name)
+                .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $showCoverPicker) {
+            AlbumCoverPicker(album: album)
                 .environmentObject(viewModel)
         }
     }
@@ -151,6 +161,10 @@ struct AlbumTracksListView: View {
                     }
                 }
                 .accessibilityLabel(allDownloaded ? "Rimuovi download" : "Scarica album")
+                ZuneCircleButton(systemImage: "photo") {
+                    showCoverPicker = true
+                }
+                .accessibilityLabel("Cambia copertina")
             }
         }
         .scrollClipDisabled()
@@ -248,11 +262,16 @@ struct AlbumTracksListView: View {
         return name
     }
 
-    /// The "⋯" menu: repeat and download, which no longer fit in the row of buttons.
+    /// The "⋯" menu: repeat, download and cover, which don't fit in the row of buttons.
     private func albumMenu(_ tracks: [AudioItem]) -> some View {
         let allDownloaded = !tracks.isEmpty && tracks.allSatisfy { downloadManager.isDownloaded($0.Id) }
 
         return Menu {
+            Button {
+                showAlbumInfo = true
+            } label: {
+                Label("Info album", systemImage: "info.circle")
+            }
             Button {
                 viewModel.toggleRepeatMode()
             } label: {
@@ -272,6 +291,11 @@ struct AlbumTracksListView: View {
                 } label: {
                     Label("Scarica album", systemImage: "arrow.down.circle")
                 }
+            }
+            Button {
+                showCoverPicker = true
+            } label: {
+                Label("Cambia copertina", systemImage: "photo")
             }
         } label: {
             Image(systemName: "ellipsis")

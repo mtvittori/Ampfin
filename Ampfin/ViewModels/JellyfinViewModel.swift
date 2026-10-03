@@ -664,6 +664,36 @@ class JellyfinViewModel: ObservableObject {
     func artworkURL(for itemId: String, size: Int = 200) -> URL? {
         return apiService?.artworkURL(for: itemId, size: size)
     }
+
+    // MARK: - Changing a cover
+
+    /// Bumped after a cover change, so every view rebuilds its artwork URLs.
+    @Published private(set) var coverRevision = 0
+
+    func canEditCovers() async -> Bool {
+        (try? await apiService?.isAdministrator()) ?? false
+    }
+
+    func remoteCovers(for itemId: String) async -> [CoverCandidate] {
+        (try? await apiService?.fetchRemoteCovers(itemId: itemId)) ?? []
+    }
+
+    func setCover(for itemId: String, to candidate: CoverCandidate) async throws {
+        guard let api = apiService else { throw APIError.invalidURL }
+        try await api.setCover(itemId: itemId, imageURL: candidate.url)
+        coverDidChange(itemId)
+    }
+
+    func uploadCover(for itemId: String, jpegData: Data) async throws {
+        guard let api = apiService else { throw APIError.invalidURL }
+        try await api.uploadCover(itemId: itemId, jpegData: jpegData)
+        coverDidChange(itemId)
+    }
+
+    private func coverDidChange(_ itemId: String) {
+        CoverRevisions.bump(itemId)
+        coverRevision += 1
+    }
     
     func streamURL(for itemId: String) -> URL? {
         return apiService?.streamURL(for: itemId)
@@ -729,6 +759,11 @@ class JellyfinViewModel: ObservableObject {
         if let artist = artistIndex.artist(named: name) { return artist }
         // A combined credit ("A feat. B") belongs to its first artist.
         return credits(of: name).dropFirst().lazy.compactMap { self.artistIndex.artist(named: $0) }.first
+    }
+
+    func itemDetails(id: String) async -> [String: Any]? {
+        guard let api = apiService else { return nil }
+        return try? await api.fetchItemDetails(itemId: id)
     }
 
     func lyrics(for item: AudioItem) async -> [JellyfinAPIService.LyricLine] {

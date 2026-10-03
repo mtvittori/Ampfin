@@ -439,7 +439,26 @@ private struct IOSToolbarModifier: ViewModifier {
             .contentShape(Rectangle())
     }
 
+    @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
+
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if !colorManager.zuneStyleEnabled && topBarStyle == TopBarStyle.ampfin.rawValue {
+            // Our own bar instead of the system one, so the buttons can be as big as we like.
+            // Only on the tab's root: the pages it opens keep the system bar and Back.
+            content
+                .navigationTitle(title ?? "amplifin")
+                .toolbar(.hidden, for: .navigationBar)
+                .safeAreaBar(edge: .top) {
+                    AmpfinTopBar(viewModel: viewModel, title: title ?? "amplifin", subtitle: subtitle)
+                }
+        } else {
+            systemBar(content)
+        }
+    }
+
+    /// The system navigation bar: inline large title, subtitle, accent capsule.
+    private func systemBar(_ content: Content) -> some View {
         content
             // Zune screens draw their own giant title.
             .navigationTitle(colorManager.zuneStyleEnabled ? "" : (title ?? "amplifin"))
@@ -467,6 +486,58 @@ private struct IOSToolbarModifier: ViewModifier {
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
+    }
+}
+
+/// The custom top bar: large title and subtitle on the left, a big accent-tinted glass
+/// capsule on the right. It sits in a `safeAreaBar`, so content scrolls under it with
+/// the system's edge blur.
+private struct AmpfinTopBar: View {
+    @ObservedObject var viewModel: JellyfinViewModel
+    let title: String
+    let subtitle: String?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.largeTitle.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityAddTraits(.isHeader)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 4) {
+                NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
+                    icon("heart.fill")
+                }
+                .accessibilityLabel("Preferiti")
+                NavigationLink(destination: SettingsView().environmentObject(viewModel)) {
+                    icon("gearshape.fill")
+                }
+                .accessibilityLabel("Impostazioni")
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    private func icon(_ systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(.white)
+            .frame(width: 54, height: 52)
+            .contentShape(Rectangle())
     }
 }
 

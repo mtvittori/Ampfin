@@ -35,39 +35,57 @@ struct ArtistsView: View {
         }
     }
 
+    @ViewBuilder
     private var stackBody: some View {
+        #if os(iOS)
+        // On iPhone the tab's own navigation stack (ContentView) is the only one: a nested
+        // stack here would carry the custom top bar into the pages it opens.
+        artistsContent
+            #if DEBUG
+            .navigationDestination(item: $testArtist) { artist in ArtistAlbumsView(artist: artist) }
+            .navigationDestination(item: $testAlbum) { album in AlbumTracksListView(album: album) }
+            .task(id: viewModel.artists.count) { openTestPage() }
+            #endif
+        #else
         NavigationStack(path: $path) {
-            Group {
-                if colorManager.zuneStyleEnabled {
-                    zuneList
-                } else {
-                    classicList
-                }
-            }
-            .refreshable {
-                await viewModel.fetchAllLibraryData()
-            }
-            .navigationDestination(for: ArtistItem.self) { artist in
-                ArtistAlbumsView(artist: artist)
-            }
-            .navigationDestination(for: AlbumItem.self) { album in
-                AlbumTracksListView(album: album)
-            }
-        }
-        #if DEBUG
-        // Test-only: `-provaArtista <name>` opens that artist's page, `-provaAlbum <name>` an album.
-        .task(id: viewModel.artists.count) {
-            guard path.isEmpty else { return }
-            if let name = UserDefaults.standard.string(forKey: "provaArtista"),
-               let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
-                path.append(artist)
-            } else if let name = UserDefaults.standard.string(forKey: "provaAlbum"),
-                      let album = viewModel.albums.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
-                path.append(album)
-            }
+            artistsContent
         }
         #endif
     }
+
+    private var artistsContent: some View {
+        Group {
+            if colorManager.zuneStyleEnabled {
+                zuneList
+            } else {
+                classicList
+            }
+        }
+        .refreshable {
+            await viewModel.fetchAllLibraryData()
+        }
+        .navigationDestination(for: ArtistItem.self) { artist in
+            ArtistAlbumsView(artist: artist)
+        }
+        .navigationDestination(for: AlbumItem.self) { album in
+            AlbumTracksListView(album: album)
+        }
+    }
+
+    #if DEBUG
+    @State private var testArtist: ArtistItem?
+    @State private var testAlbum: AlbumItem?
+
+    /// Test-only: `-provaArtista <name>` opens that artist's page, `-provaAlbum <name>` an album.
+    private func openTestPage() {
+        guard testArtist == nil, testAlbum == nil else { return }
+        if let name = UserDefaults.standard.string(forKey: "provaArtista") {
+            testArtist = viewModel.artists.first { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+        } else if let name = UserDefaults.standard.string(forKey: "provaAlbum") {
+            testAlbum = viewModel.albums.first { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+        }
+    }
+    #endif
 
     private var classicList: some View {
         List(displayedArtists) { artist in

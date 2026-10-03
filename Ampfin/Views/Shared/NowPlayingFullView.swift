@@ -49,6 +49,7 @@ struct NowPlayingFullView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var showAudioInfo: Bool = false
     @State private var panel: PlayerPanel = .artwork
+    @State private var showTrackInfo = false
     /// Page color and text color from the cover, as on the album pages.
     @State private var palette = HeroPalette.neutral
     private var fg: Color { palette.foreground }
@@ -141,6 +142,10 @@ struct NowPlayingFullView: View {
         // Audio details live in a sheet, not in an expanding glass plate: the numbers
         // sit on an opaque background where they stay legible, and the player's glass
         // row never changes height.
+        .sheet(isPresented: $showTrackInfo) {
+            ItemInfoSheet(itemId: item.Id, kind: .track, title: item.Name)
+                .environmentObject(viewModel)
+        }
         .sheet(isPresented: $showAudioInfo) {
             AudioInfoSheet(playerManager: viewModel.playerManager!)
                 .presentationDetents([.medium])
@@ -264,15 +269,20 @@ struct NowPlayingFullView: View {
 
             Menu {
                 Button {
-                    viewModel.toggleRepeatMode()
+                    showTrackInfo = true
                 } label: {
-                    Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
+                    Label("Info brano", systemImage: "music.note")
                 }
                 Button {
                     viewModel.playerManager.refreshAudioOutputInfo()
                     showAudioInfo = true
                 } label: {
-                    Label("Info audio", systemImage: "info.circle")
+                    Label("Info audio", systemImage: "waveform")
+                }
+                Button {
+                    viewModel.toggleRepeatMode()
+                } label: {
+                    Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
                 }
             } label: {
                 Image(systemName: "ellipsis")

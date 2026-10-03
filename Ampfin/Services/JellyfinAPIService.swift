@@ -225,7 +225,9 @@ class JellyfinAPIService {
     // MARK: - URL Helpers
     
     func artworkURL(for itemId: String, size: Int = 200) -> URL? {
-        return URL(string: "\(serverUrl)/Items/\(itemId)/Images/Primary?maxHeight=\(size)&maxWidth=\(size)&quality=90&tag=&api_key=\(token)")
+        // `tag` changes when the cover is changed from here, so caches keyed by URL load the new one.
+        let tag = CoverRevisions.tag(for: itemId)
+        return URL(string: "\(serverUrl)/Items/\(itemId)/Images/Primary?maxHeight=\(size)&maxWidth=\(size)&quality=90&tag=\(tag)&api_key=\(token)")
     }
     
     /// Any image of an item, e.g. `Primary` or `Backdrop/0` for an artist photo.
@@ -268,6 +270,21 @@ class JellyfinAPIService {
         }
     }
     
+    // MARK: - Item details
+
+    /// Everything the server knows about an item (song or album), as raw JSON.
+    func fetchItemDetails(itemId: String) async throws -> [String: Any] {
+        guard let url = URL(string: "\(serverUrl)/Users/\(userId)/Items/\(itemId)") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        return json
+    }
+
     // MARK: - Lyrics
 
     struct LyricLine: Identifiable, Equatable {
@@ -292,6 +309,74 @@ class JellyfinAPIService {
             let ticks = (line["Start"] as? NSNumber)?.doubleValue
             return LyricLine(id: index, text: line["Text"] as? String ?? "",
                              start: ticks.map { $0 / 10_000_000 })
+        }
+    }
+
+    // MARK: - Cover editing
+
+    /// Whether this user may change images on the server (Jellyfin allows it to admins only).
+    func isAdministrator() async throws -> Bool {
+        guard let url = URL(string: "\(serverUrl)/Users/\(userId)") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (json?["Policy"] as? [String: Any])?["IsAdministrator"] as? Bool ?? false
+    }
+
+    /// Covers the server's own providers suggest (MusicBrainz, TheAudioDB…).
+    func fetchRemoteCovers(itemId: String) async throws -> [CoverCandidate] {
+        guard let url = URL(string: "\(serverUrl)/Items/\(itemId)/RemoteImages?type=Primary&includeAllLanguages=true") else {
+            throw APIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let images = json?["Images"] as? [[String: Any]] ?? []
+        return images.compactMap { image in
+            guard let link = image["Url"] as? String, let full = URL(string: link) else { return nil }
+            return CoverCandidate(url: full, thumbnail: full,
+                                  width: image["Width"] as? Int, height: image["Height"] as? Int,
+                                  source: image["ProviderName"] as? String ?? "Jellyfin", title: nil)
+        }
+    }
+
+    /// Has the server download `imageURL` and make it the item's cover.
+    func setCover(itemId: String, imageURL: URL) async throws {
+        var components = URLComponents(string: "\(serverUrl)/Items/\(itemId)/RemoteImages/Download")
+        components?.queryItems = [URLQueryItem(name: "type", value: "Primary"),
+                                  URLQueryItem(name: "imageUrl", value: imageURL.absoluteString)]
+        // `+` is legal in a query but the server would read it as a space.
+        let query = components?.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        components?.percentEncodedQuery = query
+        guard let url = components?.url else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+
+    /// Uploads an image as the item's cover. Jellyfin 12 wants the body in base64 (raw bytes give 500).
+    func uploadCover(itemId: String, jpegData: Data) async throws {
+        guard let url = URL(string: "\(serverUrl)/Items/\(itemId)/Images/Primary") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jpegData.base64EncodedData()
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
         }
     }
 

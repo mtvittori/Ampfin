@@ -8,8 +8,10 @@ struct SettingsView: View {
     @State private var downloadSize: Int64 = 0
     @State private var cacheSize: Int64 = 0
     @State private var libraryCacheSize: Int64 = 0
+    @State private var songCacheSize: Int64 = 0
     @ObservedObject private var backup = SettingsBackup.shared
     @AppStorage(HomeStyle.storageKey) private var homeStyle = HomeStyle.classic.rawValue
+    @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -117,10 +119,16 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+
+                Picker("Barra in alto", selection: $topBarStyle) {
+                    ForEach(TopBarStyle.allCases) { style in
+                        Text(style.label).tag(style.rawValue)
+                    }
+                }
             } header: {
-                Text("Home")
+                Text("Home e barra")
             } footer: {
-                Text("Apple Music: card grandi scelte per te e file di copertine, come l'app Musica. Con lo stile Zune la Home resta quella Zune.")
+                Text("Apple Music: card grandi scelte per te e file di copertine, come l'app Musica. Barra Ampfin: titolo grande e pulsanti più grandi in una barra propria, al posto di quella di sistema. Con lo stile Zune restano quelle Zune.")
             }
 
             // MARK: - Now Playing Background
@@ -294,10 +302,25 @@ struct SettingsView: View {
                     ImageCacheService.shared.clearAll()
                     refreshSizes()
                 }
+
+                HStack {
+                    Label("Cache brani", systemImage: "music.note.list")
+                    Spacer()
+                    Text(formatBytes(songCacheSize))
+                        .foregroundColor(.secondary)
+                }
+
+                Button("Svuota cache brani", role: .destructive) {
+                    AudioStreamCache.shared.clear()
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        refreshSizes()
+                    }
+                }
             } header: {
                 Text("Cache")
             } footer: {
-                Text("La cache immagini viene ricreata automaticamente durante l'uso.")
+                Text("La cache immagini viene ricreata automaticamente durante l'uso. La cache brani tiene gli ultimi brani ascoltati (fino a 2 GB) e scarica in anticipo il prossimo della coda, così partono subito.")
             }
 
             // MARK: - Backup
@@ -449,6 +472,7 @@ struct SettingsView: View {
         downloadSize = downloadManager.totalDownloadSize()
         cacheSize = ImageCacheService.shared.diskSize()
         libraryCacheSize = LibraryCacheService.shared.diskSize()
+        songCacheSize = AudioStreamCache.shared.size()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
