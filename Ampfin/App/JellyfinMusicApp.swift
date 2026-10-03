@@ -12,7 +12,7 @@ struct JellyfinMusicApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(viewModel)
-                .tint(colorManager.hasCustomColor ? colorManager.accentColor : nil)
+                .tint(colorManager.effectiveTint)
                 .onAppear { appDelegate.viewModel = viewModel }
         }
     }
@@ -46,7 +46,7 @@ struct JellyfinMusicApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(viewModel)
-                .tint(colorManager.hasCustomColor ? colorManager.accentColor : nil)
+                .tint(colorManager.effectiveTint)
         }
     }
 }

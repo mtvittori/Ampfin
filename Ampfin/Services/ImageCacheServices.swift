@@ -27,6 +27,17 @@ final class ImageCacheService {
         memoryCache.totalCostLimit = 100 * 1024 * 1024
     }
 
+    /// Memory only: safe on the main thread. `getImage` may read and decode from disk,
+    /// so call it off the main thread.
+    func memoryImage(forKey key: String) -> PlatformImage? {
+        memoryCache.object(forKey: key as NSString)
+    }
+
+    /// The raw bytes on disk, for callers that decode (and downsample) themselves.
+    func diskData(forKey key: String) -> Data? {
+        try? Data(contentsOf: diskCachePath.appendingPathComponent(key))
+    }
+
     func getImage(forKey key: String) -> PlatformImage? {
         if let cached = memoryCache.object(forKey: key as NSString) {
             return cached
@@ -43,8 +54,9 @@ final class ImageCacheService {
         return nil
     }
 
-    func setImage(_ image: PlatformImage, forKey key: String) {
+    func setImage(_ image: PlatformImage, forKey key: String, toDisk: Bool = true) {
         memoryCache.setObject(image, forKey: key as NSString)
+        guard toDisk else { return }
 
         DispatchQueue.global(qos: .background).async {
             let fileURL = self.diskCachePath.appendingPathComponent(key)

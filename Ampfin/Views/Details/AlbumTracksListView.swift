@@ -6,6 +6,8 @@ struct AlbumTracksListView: View {
     let album: AlbumItem
 
     @State private var selectedTrackForInfo: AudioItem?
+    /// Rows cascade in only while the page opens, not when scrolled back into view.
+    @State private var introRunning = true
     @ObservedObject private var colorManager = AccentColorManager.shared
 
     var body: some View {
@@ -156,277 +158,125 @@ struct AlbumTracksListView: View {
 
     // MARK: - Classic
 
+    /// Apple Music-style page: the cover edge to edge, fading into its own color.
     private var classicBody: some View {
-        List {
-            albumHeader
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets())
-                .padding(.bottom, 8)
+        let tracks = viewModel.selectedAlbumTracks
+        let artist = viewModel.artist(named: album.AlbumArtist)
 
+        return HeroPage(
+            imageURLs: [viewModel.artworkURL(for: album.id, size: 1200)].compactMap { $0 },
+            title: album.Name,
+            subtitle: album.AlbumArtist,
+            subtitleDestination: artist.map { AnyView(ArtistAlbumsView(artist: $0)) },
+            details: classicDetails(tracks)
+        ) { palette in
+            HeroPlayControls(
+                palette: palette,
+                isCurrent: albumIsCurrent,
+                isPlaying: viewModel.isPlaying,
+                isFavorite: viewModel.isAlbumFavorite(album.id),
+                onPlay: {
+                    if let first = tracks.first { viewModel.playerManager.play(item: first, in: tracks) }
+                },
+                onShuffle: { viewModel.playerManager.playAlbumShuffled(tracks: tracks) },
+                onTogglePause: {
+                    viewModel.isPlaying ? viewModel.playerManager.pause() : viewModel.playerManager.play()
+                },
+                onFavorite: { viewModel.toggleFavoriteAlbum(album.id) }
+            )
+        } content: { palette in
             if viewModel.isLoadingAlbum {
                 ProgressView()
+                    .padding(.top, 20)
             } else {
-                ForEach(Array(viewModel.selectedAlbumTracks.enumerated()), id: \.element.id) { index, track in
-                    trackRow(track: track, index: index)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                        HeroTrackRow(track: track,
+                                     number: index + 1,
+                                     detail: trackArtistIfDifferent(track),
+                                     queue: tracks,
+                                     palette: palette,
+                                     onInfo: { selectedTrackForInfo = $0 })
+                            .entrance(.slide, delay: 0.15 + Double(index) * 0.035, enabled: introRunning && index < 14)
+                    }
                 }
-            }
+                .padding(.horizontal, 20)
 
-            // Bottom spacer so last track isn't hidden behind the mini player
-            Spacer()
-                .frame(height: 90)
-                .listRowSeparator(.hidden)
+                Text(classicFooter(tracks))
+                    .font(.footnote)
+                    .foregroundStyle(palette.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+            }
         }
-        .listStyle(.plain)
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-    }
-    
-    private var albumHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            #if os(macOS)
-            // macOS: horizontal layout
-            HStack(alignment: .top, spacing: 20) {
-                albumArtwork
-                    .frame(width: 180, height: 180)
-                albumTextInfo
-                Spacer()
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                albumMenu(tracks)
             }
-            #else
-            // iOS: vertical layout (artwork centered, text below)
-            VStack(spacing: 12) {
-                albumArtwork
-                    .frame(width: 200, height: 200)
-                albumTextInfo
-            }
-            .frame(maxWidth: .infinity)
-            #endif
-            
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 12) {
-                    Spacer()
-                    
-                    Button {
-                        if let firstTrack = viewModel.selectedAlbumTracks.first {
-                            viewModel.playerManager.play(item: firstTrack, in: viewModel.selectedAlbumTracks)
-                        }
-                    } label: {
-                        Image(systemName: "play.fill")
-                            .font(.subheadline)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.circle)
-                    
-                    Button {
-                        viewModel.playerManager.playAlbumShuffled(tracks: viewModel.selectedAlbumTracks)
-                    } label: {
-                        Image(systemName: "shuffle")
-                            .font(.subheadline)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-
-                    Button {
-                        viewModel.toggleFavoriteAlbum(album.id)
-                    } label: {
-                        Image(systemName: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart")
-                            .font(.subheadline)
-                            .foregroundColor(viewModel.isAlbumFavorite(album.id) ? .red : .primary)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-
-                    Button(action: { viewModel.toggleRepeatMode() }) {
-                        Image(systemName: viewModel.repeatMode.iconName)
-                            .font(.subheadline)
-                            .foregroundColor(viewModel.repeatMode == .off ? .primary : .accentColor)
-                            .frame(width: 28, height: 28)
-                    }
-                    .accessibilityLabel("Repeat mode")
-                    #if os(macOS)
-                    .help("Repeat: \(viewModel.repeatMode.description)")
-                    #endif
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-
-                    // Download all / remove all
-                    Button {
-                        let allDownloaded = viewModel.selectedAlbumTracks.allSatisfy { downloadManager.isDownloaded($0.Id) }
-                        if allDownloaded {
-                            for track in viewModel.selectedAlbumTracks {
-                                viewModel.removeDownload(for: track.Id)
-                            }
-                        } else {
-                            for track in viewModel.selectedAlbumTracks where !downloadManager.isDownloaded(track.Id) {
-                                viewModel.downloadTrack(track)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: viewModel.selectedAlbumTracks.allSatisfy({ downloadManager.isDownloaded($0.Id) }) ? "arrow.down.circle.fill" : "arrow.down.circle")
-                            .font(.subheadline)
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    
-                    Spacer()
-                }
-            }
-        }.padding([.horizontal, .top])
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(1.5))
+            introRunning = false
+        }
     }
 
-    private var albumArtwork: some View {
-        AsyncImage(url: viewModel.artworkURL(for: album.id, size: 360)) { $0.resizable().aspectRatio(contentMode: .fit) }
-        placeholder: { Rectangle().fill(.gray.opacity(0.3)).overlay(Image(systemName: "music.note")) }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(radius: 5)
+    private var albumIsCurrent: Bool {
+        guard let playing = viewModel.currentlyPlayingItem else { return false }
+        return playing.AlbumId == album.id
     }
 
-    private var albumTextInfo: some View {
-        VStack(spacing: 4) {
-            Text(album.Name).font(.title).fontWeight(.bold)
-                .multilineTextAlignment(.center)
-            Text(album.AlbumArtist ?? "Artista Sconosciuto").font(.title3).foregroundColor(.accentColor)
-                .multilineTextAlignment(.center)
-        }
-        #if os(iOS)
-        .frame(maxWidth: .infinity)
-        #endif
-        #if os(macOS)
-        .padding(.top, 5)
-        #endif
+    /// "Pop · 2014 · Lossless", like the line under the title in Apple Music.
+    private func classicDetails(_ tracks: [AudioItem]) -> String {
+        var parts: [String] = []
+        if let genre = album.Genres?.first { parts.append(genre) }
+        if let year = album.ProductionYear { parts.append(String(year)) }
+        if !tracks.isEmpty, tracks.allSatisfy(\.isLossless) { parts.append("Lossless") }
+        return parts.joined(separator: " · ")
     }
-    
-    private func trackRow(track: AudioItem, index: Int) -> some View {
-        HStack {
-            Text("\(index + 1)").font(.callout).foregroundColor(.secondary).frame(minWidth: 24, alignment: .trailing)
-            Text(track.Name).font(.body).lineLimit(1)
-            if track.isLossless {
-                Text("FLAC")
-                    .font(.caption2)
-                    .foregroundColor(.blue)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.blue.opacity(0.15))
-                    .clipShape(Capsule())
-            }
-            Spacer()
 
-            // Now-playing indicator (left of favorite)
-            if viewModel.currentlyPlayingItem?.id == track.id {
-                Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
-                    .foregroundColor(.accentColor)
-            }
-            
-            // Favorite button for track
-            Button(action: {
-                viewModel.toggleFavoriteTrack(track.id)
-            }) {
-                Image(systemName: viewModel.isTrackFavorite(track.id) ? "heart.fill" : "heart")
-                    .foregroundColor(viewModel.isTrackFavorite(track.id) ? .red : .secondary)
-            }
-            .buttonStyle(PlainButtonStyle())
+    private func classicFooter(_ tracks: [AudioItem]) -> String {
+        let minutes = Int((tracks.compactMap(\.duration).reduce(0, +) / 60).rounded())
+        let count = tracks.count == 1 ? "1 brano" : "\(tracks.count) brani"
+        return minutes > 0 ? "\(count), \(minutes) minuti" : count
+    }
 
-            // Download button
-            downloadButton(for: track)
-                .padding(.trailing, 4)
+    /// The track's own artist under its title, only when it isn't the album's.
+    private func trackArtistIfDifferent(_ track: AudioItem) -> String? {
+        guard let name = track.Artists?.joined(separator: ", "), !name.isEmpty,
+              name != album.AlbumArtist else { return nil }
+        return name
+    }
 
-            Text(formatTime(track.duration ?? 0)).font(.callout).foregroundColor(.secondary)
-        }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.playerManager.play(item: track, in: viewModel.selectedAlbumTracks)
-        }
-        .contextMenu {
+    /// The "⋯" menu: repeat and download, which no longer fit in the row of buttons.
+    private func albumMenu(_ tracks: [AudioItem]) -> some View {
+        let allDownloaded = !tracks.isEmpty && tracks.allSatisfy { downloadManager.isDownloaded($0.Id) }
+
+        return Menu {
             Button {
-                viewModel.playerManager.play(item: track, in: viewModel.selectedAlbumTracks)
+                viewModel.toggleRepeatMode()
             } label: {
-                Label("Riproduci", systemImage: "play.fill")
+                Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
             }
-
-            Button {
-                viewModel.toggleFavoriteTrack(track.id)
-            } label: {
-                Label(
-                    viewModel.isTrackFavorite(track.id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti",
-                    systemImage: viewModel.isTrackFavorite(track.id) ? "heart.slash" : "heart"
-                )
-            }
-
-            if downloadManager.isDownloaded(track.Id) {
+            if allDownloaded {
                 Button(role: .destructive) {
-                    viewModel.removeDownload(for: track.Id)
+                    for track in tracks { viewModel.removeDownload(for: track.Id) }
                 } label: {
                     Label("Rimuovi download", systemImage: "trash")
                 }
             } else {
                 Button {
-                    viewModel.downloadTrack(track)
-                } label: {
-                    Label("Scarica", systemImage: "arrow.down.circle")
-                }
-            }
-
-            Divider()
-
-            Button {
-                selectedTrackForInfo = track
-            } label: {
-                Label("Dettagli brano", systemImage: "info.circle")
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private func downloadButton(for track: AudioItem) -> some View {
-        let state = downloadManager.downloadStates[track.Id] ?? .notDownloaded
-        switch state {
-        case .notDownloaded:
-            Button {
-                viewModel.downloadTrack(track)
-            } label: {
-                Image(systemName: "arrow.down.circle")
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-        case .downloading(let progress):
-            ZStack {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 2)
-                    .frame(width: 18, height: 18)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .frame(width: 18, height: 18)
-                    .rotationEffect(.degrees(-90))
-            }
-            .onTapGesture {
-                viewModel.removeDownload(for: track.Id)
-            }
-        case .downloaded:
-            Image(systemName: "arrow.down.circle.fill")
-                .foregroundColor(.accentColor)
-                .contextMenu {
-                    Button(role: .destructive) {
-                        viewModel.removeDownload(for: track.Id)
-                    } label: {
-                        Label("Rimuovi download", systemImage: "trash")
+                    for track in tracks where !downloadManager.isDownloaded(track.Id) {
+                        viewModel.downloadTrack(track)
                     }
+                } label: {
+                    Label("Scarica album", systemImage: "arrow.down.circle")
                 }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
         }
-    }
-
-    private func formatTime(_ time: TimeInterval) -> String {
-        guard !time.isNaN && !time.isInfinite && time >= 0 else { return "0:00" }
-        let totalSeconds = Int(time)
-        let minutes = totalSeconds / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%d:%02d", minutes, seconds)
+        .accessibilityLabel("Altro")
     }
 }
 

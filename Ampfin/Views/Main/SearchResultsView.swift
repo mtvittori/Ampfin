@@ -232,7 +232,7 @@ struct SearchResultsView: View {
             }
 
             // Bottom spacer for player
-            Spacer().frame(height: 90)
+            Spacer().frame(height: 150)
                 .listRowSeparator(.hidden)
         }
         .listStyle(.plain)
@@ -320,7 +320,7 @@ struct SearchResultsView: View {
                 Text(track.Name)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                Text(track.mainArtistName ?? "")
+                Text(viewModel.artistName(for: track) ?? "")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

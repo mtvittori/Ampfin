@@ -103,9 +103,11 @@ struct ZuneHomeView: View {
                     .foregroundStyle(.white.opacity(0.7))
                     .lineLimit(1)
                 if isCurrent {
-                    Text("\(ZuneFormat.time(viewModel.currentTime)) / \(ZuneFormat.time(item.duration ?? 0))")
-                        .font(.zune(14, .regular, relativeTo: .caption).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.55))
+                    ClockReader(clock: viewModel.clock) { time in
+                        Text("\(ZuneFormat.time(time)) / \(ZuneFormat.time(item.duration ?? 0))")
+                            .font(.zune(14, .regular, relativeTo: .caption).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
                 }
                 ZuneCircleButton(title: playing ? "pausa" : "riproduci",
                                  systemImage: playing ? "pause.fill" : "play.fill") {

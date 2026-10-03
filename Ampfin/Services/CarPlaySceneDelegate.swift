@@ -172,9 +172,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     }
 
     private func showArtistAlbums(artist: ArtistItem, viewModel: JellyfinViewModel) {
-        let artistAlbums = viewModel.albums.filter { album in
-            album.AlbumArtist == artist.Name
-        }
+        let artistAlbums = viewModel.albums(byArtist: artist)
         let items = artistAlbums.map { album in
             makeAlbumListItem(album: album, viewModel: viewModel)
         }

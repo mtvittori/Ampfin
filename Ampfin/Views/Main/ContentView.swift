@@ -15,6 +15,7 @@ extension EnvironmentValues {
 struct ContentView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject private var colorManager = AccentColorManager.shared
+    @AppStorage(HomeStyle.storageKey) private var homeStyle = HomeStyle.classic.rawValue
 
     // Sidebar / Tab selection
     enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
@@ -55,8 +56,29 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showFullPlayer: Bool = false
     @State private var miniPlayerVisible: Bool = true
+    /// The cover morphs between the mini player and the full player.
+    @Namespace private var playerArtwork
 
     var body: some View {
+        mainBody
+            // The accent can follow the cover of the album that's playing.
+            .task(id: viewModel.currentlyPlayingItem.map { $0.AlbumId ?? $0.id }) {
+                await updateArtworkAccent()
+            }
+    }
+
+    private func updateArtworkAccent() async {
+        guard let item = viewModel.currentlyPlayingItem,
+              let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 300),
+              let image = await ZuneImageLoader.shared.firstImage(from: [url]),
+              let color = image.averageColor() else { return }
+        withAnimation(.easeInOut(duration: 0.8)) {
+            colorManager.artworkAccent = color.legibleAccent()
+        }
+    }
+
+    @ViewBuilder
+    private var mainBody: some View {
         if !viewModel.isLoggedIn {
             LoginView()
                 #if os(macOS)
@@ -130,17 +152,17 @@ struct ContentView: View {
     @ViewBuilder
     private var macOSPlayerOverlay: some View {
         if let playingItem = viewModel.currentlyPlayingItem {
-            MusicPlayerView(
+            ClockReader(clock: viewModel.clock) { time in MusicPlayerView(
                 item: playingItem,
                 isPlaying: viewModel.isPlaying,
-                currentTime: viewModel.currentTime,
+                currentTime: time,
                 duration: playingItem.duration ?? 0,
                 artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
                 onPlayPause: { viewModel.playerManager.togglePlayPause() },
                 onBackward: { viewModel.playerManager.backward() },
                 onForward: { viewModel.playerManager.forward() },
                 onSeek: { time in viewModel.playerManager.seek(to: time) }
-            )
+            ) }
             // Without a max width, the seek Slider inside greedily fills the HStack,
             // stretching the bar edge-to-edge on wide windows instead of staying a
             // compact, centered pill (as in macOS Music's own now-playing bar).
@@ -167,39 +189,63 @@ struct ContentView: View {
                 } else {
                     TabView(selection: $selectedTab) {
                         Tab(SidebarItem.home.title, systemImage: SidebarItem.home.systemImage, value: .home) {
-                            NavigationStack {
-                                HomeView()
-                                    .iOSToolbar(viewModel: viewModel)
+                            // Zoom transitions from covers to their pages.
+                            ZoomScope {
+                                NavigationStack {
+                                    HomeView()
+                                        .iOSToolbar(viewModel: viewModel,
+                                                    title: homeStyle == HomeStyle.appleMusic.rawValue ? "Home" : nil)
+                                }
                             }
                         }
 
                         Tab(SidebarItem.tracks.title, systemImage: SidebarItem.tracks.systemImage, value: .tracks) {
-                            NavigationStack {
-                                TracksView()
-                                    .iOSToolbar(viewModel: viewModel)
+                            // Zoom transitions from covers to their pages.
+                            ZoomScope {
+                                NavigationStack {
+                                    TracksView()
+                                        .iOSToolbar(viewModel: viewModel, title: "Brani")
+                                }
                             }
                         }
 
                         Tab(SidebarItem.albums.title, systemImage: SidebarItem.albums.systemImage, value: .albums) {
-                            NavigationStack {
-                                AlbumsView()
-                                    .iOSToolbar(viewModel: viewModel)
+                            // Zoom transitions from covers to their pages.
+                            ZoomScope {
+                                NavigationStack {
+                                    AlbumsView()
+                                        .iOSToolbar(viewModel: viewModel, title: "Album")
+                                }
                             }
                         }
 
                         Tab(SidebarItem.artists.title, systemImage: SidebarItem.artists.systemImage, value: .artists) {
-                            NavigationStack {
-                                ArtistsView()
-                                    .iOSToolbar(viewModel: viewModel)
+                            // Zoom transitions from covers to their pages.
+                            ZoomScope {
+                                NavigationStack {
+                                    ArtistsView()
+                                        .iOSToolbar(viewModel: viewModel, title: "Artisti")
+                                }
                             }
                         }
 
                         Tab(value: .search, role: .search) {
-                            NavigationStack {
-                                SearchResultsView(query: $viewModel.globalSearchQuery)
-                                    .environmentObject(viewModel)
-                                    .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
+                            // Zoom transitions from covers to their pages.
+                            ZoomScope {
+                                NavigationStack {
+                                    SearchResultsView(query: $viewModel.globalSearchQuery)
+                                        .environmentObject(viewModel)
+                                        .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
+                                }
                             }
+                        }
+                    }
+                    // Classic: the mini player is iOS 26's own accessory above the tabs,
+                    // which shrinks next to them while scrolling down, as in Apple Music.
+                    .tabBarMinimizeBehavior(.onScrollDown)
+                    .nowPlayingAccessory(isEnabled: viewModel.currentlyPlayingItem != nil) {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                            showFullPlayer = true
                         }
                     }
                 }
@@ -209,21 +255,24 @@ struct ContentView: View {
             // Player layer
             if let playingItem = viewModel.currentlyPlayingItem {
                 ZStack {
+                    // The floating mini bar is only for the Zune pivot, which has no tab bar.
                     if !showFullPlayer {
+                      if colorManager.zuneStyleEnabled {
                         // Mini player bar
                         VStack(spacing: 0) {
                             Spacer()
-                            MusicPlayerView(
+                            ClockReader(clock: viewModel.clock) { time in MusicPlayerView(
                                 item: playingItem,
                                 isPlaying: viewModel.isPlaying,
-                                currentTime: viewModel.currentTime,
+                                currentTime: time,
                                 duration: playingItem.duration ?? 0,
                                 artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
                                 onPlayPause: { viewModel.playerManager.togglePlayPause() },
                                 onBackward: { viewModel.playerManager.backward() },
                                 onForward: { viewModel.playerManager.forward() },
-                                onSeek: { time in viewModel.playerManager.seek(to: time) }
-                            )
+                                onSeek: { time in viewModel.playerManager.seek(to: time) },
+                                artworkNamespace: playerArtwork
+                            ) }
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
@@ -236,23 +285,26 @@ struct ContentView: View {
                         }
                         .offset(y: miniPlayerVisible ? 0 : 200)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                      }
                     } else {
                         // Full player — its own Liquid Glass elements materialize in place
                         // (no shape-morph from the mini bar; see NowPlayingFullView doc comment).
-                        NowPlayingFullView(
+                        ClockReader(clock: viewModel.clock) { time in NowPlayingFullView(
                             item: playingItem,
                             isPlaying: viewModel.isPlaying,
-                            currentTime: viewModel.currentTime,
+                            currentTime: time,
                             duration: playingItem.duration ?? 0,
                             artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 600),
                             onPlayPause: { viewModel.playerManager.togglePlayPause() },
                             onBackward: { viewModel.playerManager.backward() },
                             onForward: { viewModel.playerManager.forward() },
                             onSeek: { time in viewModel.playerManager.seek(to: time) },
-                            isExpanded: $showFullPlayer
-                        )
+                            isExpanded: $showFullPlayer,
+                            artworkNamespace: playerArtwork
+                        ) }
                         .glassEffectTransition(.materialize)
-                        .transition(.opacity)
+                        // Classic rises from the accessory like a sheet; Zune fades in.
+                        .transition(colorManager.zuneStyleEnabled ? .opacity : .move(edge: .bottom))
                     }
                 }
             }
@@ -271,7 +323,7 @@ struct ContentView: View {
     #if DEBUG
     /// Test-only launch arguments, to photograph screens on the phone from the Mac:
     /// `-provaScheda artists` opens a tab; `-provaPlay <artist>` starts that artist,
-    /// pauses straight away and opens the full player.
+    /// pauses straight away and opens the full player (`-provaMini YES`: mini player only).
     private func applyTestLaunchArguments() async {
         let defaults = UserDefaults.standard
         if let tab = defaults.string(forKey: "provaScheda").flatMap(SidebarItem.init(rawValue:)) {
@@ -284,9 +336,14 @@ struct ContentView: View {
         guard let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }),
               let first = viewModel.tracks(byArtist: artist).first else { return }
         viewModel.playerManager.play(item: first, in: viewModel.tracks(byArtist: artist))
-        try? await Task.sleep(for: .seconds(1))
-        viewModel.playerManager.togglePlayPause()
-        showFullPlayer = true
+        // Pause only once the sound has really started (isPlaying turns true before
+        // the download ends), or the audio would start after the pause.
+        for _ in 0..<60 where viewModel.currentTime <= 0 {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        viewModel.playerManager.pause()
+        // `-provaMini YES` leaves the mini player instead of opening the full one.
+        showFullPlayer = !defaults.bool(forKey: "provaMini")
     }
     #endif
     #endif
@@ -354,33 +411,48 @@ struct ContentView: View {
 #if os(iOS)
 private struct IOSToolbarModifier: ViewModifier {
     @ObservedObject var viewModel: JellyfinViewModel
+    var title: String? = nil
     @ObservedObject private var colorManager = AccentColorManager.shared
+
+    // Same size as iOS 26's own toolbar groups: 44 pt tall, a 48 pt slot per icon.
+    private func toolbarIcon(_ systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 19, weight: .medium))
+            .foregroundStyle(.white)
+            .frame(width: 48, height: 44)
+            .contentShape(Rectangle())
+    }
 
     func body(content: Content) -> some View {
         content
             // Zune screens draw their own giant title.
-            .navigationTitle(colorManager.zuneStyleEnabled ? "" : "amplifin")
+            .navigationTitle(colorManager.zuneStyleEnabled ? "" : (title ?? "amplifin"))
+            // One capsule of glass tinted with the accent (the playing album's color when
+            // that option is on), at the size of iOS 26's toolbar groups. Logout lives in Settings.
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
-                        Image(systemName: "heart.fill")
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 2) {
+                        NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
+                            toolbarIcon("heart.fill")
+                        }
+                        .accessibilityLabel("Preferiti")
 
-                    NavigationLink(destination: SettingsView().environmentObject(viewModel)) {
-                        Image(systemName: "gearshape")
+                        NavigationLink(destination: SettingsView().environmentObject(viewModel)) {
+                            toolbarIcon("gearshape.fill")
+                        }
+                        .accessibilityLabel("Impostazioni")
                     }
-
-                    Button(action: { viewModel.logout() }) {
-                        Image(systemName: "rectangle.portrait.and.arrow.right")
-                    }
+                    .padding(.horizontal, 6)
+                    .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
     }
 }
 
 extension View {
-    func iOSToolbar(viewModel: JellyfinViewModel) -> some View {
-        modifier(IOSToolbarModifier(viewModel: viewModel))
+    func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil) -> some View {
+        modifier(IOSToolbarModifier(viewModel: viewModel, title: title))
     }
 }
 
@@ -398,7 +470,10 @@ struct ScrollHidesMiniPlayer: ViewModifier {
                 // Only react to meaningful scroll movements
                 if abs(delta) > 4 {
                     let scrollingDown = delta > 0 && newOffset > 0
-                    miniPlayerVisible.wrappedValue = !scrollingDown
+                    // Write only on a real change: every write redraws the root view and its tabs.
+                    if miniPlayerVisible.wrappedValue == scrollingDown {
+                        miniPlayerVisible.wrappedValue = !scrollingDown
+                    }
                     lastOffset = newOffset
                 }
             }

@@ -52,17 +52,18 @@ struct AlbumsView: View {
                     } else {
                         LazyVGrid(columns: columns, spacing: 20) {
                             ForEach(displayedAlbums) { album in
-                                NavigationLink(destination: AlbumTracksListView(album: album)) {
-                                    AlbumGridItemView(album: album, artworkURL: viewModel.artworkURL(for: album.id, size: 300))
+                                NavigationLink(destination: AlbumTracksListView(album: album).zoomDestination("albums-\(album.id)")) {
+                                    AlbumGridItemView(album: album, artworkURL: viewModel.artworkURL(for: album.id, size: 300),
+                                                      zoomID: "albums-\(album.id)")
                                         .frame(minWidth: 140, minHeight: 160)
-                                        .drawingGroup()
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressable)
+                                .gridSettle()
                             }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 16)
-                        .padding(.bottom, 100) // lascia spazio per mini player overlay
+                        .padding(.bottom, 170) // lascia spazio per mini player overlay
                     }
                 }
                 .frame(maxWidth: .infinity)

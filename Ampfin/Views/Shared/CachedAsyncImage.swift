@@ -57,15 +57,24 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
         guard let url else { return }
 
         let key = ImageCacheService.shared.key(for: url)
-        if let cached = ImageCacheService.shared.getImage(forKey: key) {
+        // Only the memory cache here: reading and decoding from disk on the main
+        // thread made every cover that scrolled in stall the scroll.
+        if let cached = ImageCacheService.shared.memoryImage(forKey: key) {
             self.image = Image(platformImage: cached)
             return
         }
 
         let scale = displayScale
-        task = Task.detached(priority: .utility) {
+        task = Task.detached(priority: .userInitiated) {
             do {
-                let (data, _) = try await JellyfinAPIService.urlSession.data(from: url)
+                let data: Data
+                let saved = ImageCacheService.shared.diskData(forKey: key)
+                if let saved {
+                    data = saved
+                } else {
+                    data = try await JellyfinAPIService.urlSession.data(from: url).0
+                }
+                if Task.isCancelled { return }
 
                 // Downsample the image to the target display size to reduce memory
                 let platform: PlatformImage?
@@ -75,9 +84,11 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
                     platform = PlatformImage(data: data)
                 }
 
-                guard let platform else { return }
+                // Decode now, off the main thread, instead of lazily at first draw.
+                guard let platform = platform.map(Self.decoded) else { return }
 
-                ImageCacheService.shared.setImage(platform, forKey: key)
+                // Already on disk when it came from there: memory only.
+                ImageCacheService.shared.setImage(platform, forKey: key, toDisk: saved == nil)
 
                 await MainActor.run {
                     self.image = Image(platformImage: platform)
@@ -86,6 +97,14 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
                 // lascia placeholder
             }
         }
+    }
+
+    private nonisolated static func decoded(_ image: PlatformImage) -> PlatformImage {
+        #if os(iOS)
+        return image.preparingForDisplay() ?? image
+        #else
+        return image
+        #endif
     }
 
     /// Downsamples image data to a target pixel size using ImageIO for memory efficiency

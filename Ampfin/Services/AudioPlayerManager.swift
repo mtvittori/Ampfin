@@ -37,6 +37,16 @@ final class AudioPlayerManager: ObservableObject {
 
     private var playQueue: [AudioItem] = []
 
+    /// The whole play queue, for the "Up next" list.
+    var queue: [AudioItem] { playQueue }
+
+    /// The songs after the one playing.
+    var upNext: [AudioItem] {
+        guard let current = currentlyPlayingItem,
+              let index = playQueue.firstIndex(where: { $0.id == current.id }) else { return [] }
+        return Array(playQueue.dropFirst(index + 1))
+    }
+
     private var streamURLProvider: ((String) -> URL?)?
     var artworkURLProvider: ((String, Int) -> URL?)?
 

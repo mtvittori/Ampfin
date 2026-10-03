@@ -24,27 +24,47 @@ struct HomeView: View {
     @ObservedObject private var colorManager = AccentColorManager.shared
     @EnvironmentObject var viewModel: JellyfinViewModel
 
+    @AppStorage(HomeStyle.storageKey) private var homeStyle = HomeStyle.classic.rawValue
+
     var body: some View {
         if colorManager.zuneStyleEnabled {
             ZuneHomeView()
+        } else if homeStyle == HomeStyle.appleMusic.rawValue {
+            AppleHomeView()
         } else {
             classicBody
         }
+    }
+
+    /// Cover whose colors tint the moving background: what's playing, else the latest.
+    private var auroraURL: URL? {
+        if let item = viewModel.currentlyPlayingItem ?? viewModel.recentlyPlayedTracks.first {
+            return viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 300)
+        }
+        return viewModel.recentlyAddedAlbums.first.map { viewModel.artworkURL(for: $0.id, size: 300) } ?? nil
     }
 
     private var classicBody: some View {
         ScrollView {
             VStack(spacing: 24) {
                 FavoritesSectionSplit()
+                    .entrance(.rise)
 
                 ResumeNowSection()
+                    .entrance(.rise, delay: 0.08)
 
                 RecentTracksSection()
+                    .entrance(.rise, delay: 0.16)
 
                 RecentAlbumsSection()
+                    .entrance(.rise, delay: 0.24)
             }
             .padding(.top, 16)
-            .padding(.bottom, 80)
+            // Room for the mini player above the tab bar.
+            .padding(.bottom, 170)
+        }
+        .background {
+            AuroraBackground(imageURL: auroraURL)
         }
         #if os(iOS)
         .hidesMiniPlayerOnScroll()
@@ -83,10 +103,12 @@ private struct FavoritesSectionSplit: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(viewModel.favoriteAlbums) { album in
-                            VerticalAlbumCard(album: album, cardWidth: 160)
+                            VerticalAlbumCard(album: album, cardWidth: 160, zoomGroup: "home-fav")
+                                .coverFlow()
                         }
                         ForEach(viewModel.favoriteTracks) { track in
                             VerticalTrackCard(track: track, queue: viewModel.audioItems, cardWidth: 160)
+                                .coverFlow()
                         }
                     }
                     .padding(.horizontal, 16)
@@ -101,6 +123,8 @@ private struct FavoritesSectionSplit: View {
 
 private struct ResumeNowSection: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var colorManager = AccentColorManager.shared
+    @State private var coverColor: Color = .clear
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -125,14 +149,17 @@ private struct ResumeNowSection: View {
                         Text(item.Name)
                             .font(.headline)
                             .lineLimit(1)
-                        Text(item.mainArtistName ?? "Artista Sconosciuto")
+                        Text(viewModel.artistName(for: item) ?? "Artista Sconosciuto")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
-                        if let positionText = playbackPositionText {
-                            Text(positionText)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        // Only this line follows the playback clock.
+                        ClockReader(clock: viewModel.clock) { _ in
+                            if let positionText = playbackPositionText {
+                                Text(positionText)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     Spacer()
@@ -144,13 +171,27 @@ private struct ResumeNowSection: View {
                         let playing = viewModel.isPlaying && isCurrent
                         Image(systemName: playing ? "pause.fill" : "play.fill")
                             .font(.title2)
+                            .contentTransition(.symbolEffect(.replace))
                             .frame(width: 40, height: 40)
                     }
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.circle)
                 }
                 .padding(14)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                // A control, not just content: the whole card plays, so it is interactive
+                // glass tinted with the cover, and it answers the finger.
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture { handlePlayPause(for: item) }
+                .glassEffect(.regular.tint(colorManager.glassTintEnabled
+                                           ? coverColor.opacity(0.45 * colorManager.glassTintIntensity) : .clear)
+                                 .interactive(),
+                             in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .task(id: item.AlbumId ?? item.id) {
+                    guard let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 120),
+                          let image = await ZuneImageLoader.shared.firstImage(from: [url]),
+                          let color = image.averageColor() else { return }
+                    withAnimation(.easeInOut(duration: 0.6)) { coverColor = color }
+                }
             } else {
                 Text("Nessun brano da riprendere")
                     .font(.subheadline)
@@ -176,7 +217,7 @@ private struct ResumeNowSection: View {
         if let current = viewModel.currentlyPlayingItem {
             return current
         }
-        return viewModel.audioItems.first
+        return viewModel.recentlyPlayedTracks.first ?? viewModel.audioItems.first
     }
 
     private var playbackPositionText: String? {
@@ -220,6 +261,7 @@ private struct RecentTracksSection: View {
                     LazyHStack(spacing: 12) {
                         ForEach(tracks) { track in
                             VerticalTrackCard(track: track, queue: viewModel.audioItems, cardWidth: 160)
+                                .coverFlow()
                         }
                     }
                     .padding(.horizontal, 16)
@@ -267,7 +309,8 @@ private struct RecentAlbumsSection: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(albumsToShow) { album in
-                            VerticalAlbumCard(album: album, cardWidth: 160)
+                            VerticalAlbumCard(album: album, cardWidth: 160, zoomGroup: "home-recent")
+                                .coverFlow()
                         }
                     }
                     .padding(.horizontal, 16)
@@ -311,7 +354,7 @@ struct VerticalTrackCard: View {
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                         .foregroundColor(colorIsLight ? .black : .primary)
-                    Text(track.mainArtistName ?? "Artista")
+                    Text(viewModel.artistName(for: track) ?? "Artista")
                         .font(.caption2)
                         .lineLimit(1)
                         .foregroundColor(colorIsLight ? .black.opacity(0.6) : .secondary)
@@ -326,6 +369,8 @@ struct VerticalTrackCard: View {
                     Image(systemName: viewModel.isTrackFavorite(track.id) ? "heart.fill" : "heart")
                         .foregroundColor(viewModel.isTrackFavorite(track.id) ? .red : (colorIsLight ? .black : .primary))
                         .font(.callout)
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.bounce, value: viewModel.isTrackFavorite(track.id))
                 }
                 .buttonStyle(.plain)
 
@@ -345,11 +390,14 @@ struct VerticalTrackCard: View {
         }
     }
 
+    /// Disk read and color sampling off the main thread, so cards don't stall scrolling.
     private func loadAverageColor(url: URL?) async {
         guard let url else { return }
-        let key = ImageCacheService.shared.key(for: url)
-        if let cached = ImageCacheService.shared.getImage(forKey: key),
-           let color = cached.averageColor() {
+        let color = await Task.detached(priority: .utility) { () -> Color? in
+            let key = ImageCacheService.shared.key(for: url)
+            return ImageCacheService.shared.getImage(forKey: key)?.averageColor()
+        }.value
+        if let color {
             avgColor = color
             colorIsLight = color.isLight()
         }
@@ -363,14 +411,17 @@ struct VerticalAlbumCard: View {
     @ObservedObject private var colorManager = AccentColorManager.shared
     let album: AlbumItem
     let cardWidth: CGFloat
+    /// Keeps zoom ids unique when the same album shows in two strips.
+    var zoomGroup: String = "card"
 
     @State private var avgColor: Color = .clear
     @State private var colorIsLight: Bool = false
 
     var body: some View {
         let artworkURL = viewModel.artworkURL(for: album.id, size: 300)
+        let zoomID = "\(zoomGroup)-\(album.id)"
 
-        NavigationLink(destination: AlbumTracksListView(album: album)) {
+        NavigationLink(destination: AlbumTracksListView(album: album).zoomDestination(zoomID)) {
             ZStack(alignment: .bottom) {
                 // Artwork fills entire card
                 CachedAsyncImage(url: artworkURL, targetSize: 300) { image in
@@ -403,6 +454,8 @@ struct VerticalAlbumCard: View {
                         Image(systemName: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart")
                             .foregroundColor(viewModel.isAlbumFavorite(album.id) ? .red : (colorIsLight ? .black : .primary))
                             .font(.callout)
+                            .contentTransition(.symbolEffect(.replace))
+                            .symbolEffect(.bounce, value: viewModel.isAlbumFavorite(album.id))
                     }
                     .buttonStyle(.plain)
                 }
@@ -414,18 +467,22 @@ struct VerticalAlbumCard: View {
             }
             .frame(width: cardWidth, height: cardWidth)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .zoomSource(zoomID)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
     }
 
+    /// Disk read and color sampling off the main thread, so cards don't stall scrolling.
     private func loadAverageColor(url: URL?) async {
         guard let url else { return }
-        let key = ImageCacheService.shared.key(for: url)
-        if let cached = ImageCacheService.shared.getImage(forKey: key),
-           let color = cached.averageColor() {
+        let color = await Task.detached(priority: .utility) { () -> Color? in
+            let key = ImageCacheService.shared.key(for: url)
+            return ImageCacheService.shared.getImage(forKey: key)?.averageColor()
+        }.value
+        if let color {
             avgColor = color
             colorIsLight = color.isLight()
         }
@@ -458,6 +515,7 @@ private struct PlayButtonForTrack: View {
         } label: {
             Image(systemName: isTrackPlaying ? "pause.fill" : "play.fill")
                 .font(.body)
+                .contentTransition(.symbolEffect(.replace))
                 .foregroundColor(colorIsLight ? .black : .primary)
                 .frame(width: 36, height: 36)
                 .contentShape(Rectangle())
@@ -485,7 +543,7 @@ struct TrackCardRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.Name).font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(track.mainArtistName ?? "Artista Sconosciuto")
+                Text(viewModel.artistName(for: track) ?? "Artista Sconosciuto")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)

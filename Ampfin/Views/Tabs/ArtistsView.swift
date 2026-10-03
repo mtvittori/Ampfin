@@ -10,6 +10,8 @@ struct ArtistsView: View {
     @State private var scrolledID: String?
     @State private var backdropArtist: ArtistItem?
     @State private var path = NavigationPath()
+    /// Artist whose long-press menu asked to merge others into it.
+    @State private var mergeTarget: ArtistItem?
 
     // Use global search query to filter artists
     private var displayedArtists: [ArtistItem] {
@@ -53,11 +55,15 @@ struct ArtistsView: View {
             }
         }
         #if DEBUG
-        // Test-only: `-provaArtista <name>` opens that artist's page.
+        // Test-only: `-provaArtista <name>` opens that artist's page, `-provaAlbum <name>` an album.
         .task(id: viewModel.artists.count) {
-            if path.isEmpty, let name = UserDefaults.standard.string(forKey: "provaArtista"),
+            guard path.isEmpty else { return }
+            if let name = UserDefaults.standard.string(forKey: "provaArtista"),
                let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
                 path.append(artist)
+            } else if let name = UserDefaults.standard.string(forKey: "provaAlbum"),
+                      let album = viewModel.albums.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+                path.append(album)
             }
         }
         #endif
@@ -68,8 +74,13 @@ struct ArtistsView: View {
             NavigationLink(value: artist) {
                 Text(artist.Name)
             }
+            .mergeArtistMenu(artist, target: $mergeTarget)
         }
         .navigationTitle("Artisti")
+        .sheet(item: $mergeTarget) { artist in
+            MergeArtistsSheet(main: artist)
+                .environmentObject(viewModel)
+        }
     }
 
     // MARK: - Zune
@@ -89,6 +100,7 @@ struct ArtistsView: View {
                             artistRow(artist)
                         }
                         .buttonStyle(.plain)
+                        .mergeArtistMenu(artist, target: $mergeTarget)
                         .id(artist.Id)
                     }
                 }
@@ -98,6 +110,10 @@ struct ArtistsView: View {
             .padding(.bottom, 120)
         }
         .scrollPosition(id: $scrolledID, anchor: .top)
+        .sheet(item: $mergeTarget) { artist in
+            MergeArtistsSheet(main: artist)
+                .environmentObject(viewModel)
+        }
         .zuneBackdrop(urls: backdropArtist.map { viewModel.artistImageURLs(for: $0) } ?? [], dim: 0.55)
         #if os(iOS)
         .hidesMiniPlayerOnScroll()

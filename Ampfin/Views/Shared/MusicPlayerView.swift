@@ -13,6 +13,7 @@ struct MusicPlayerView: View {
     let onBackward: () -> Void
     let onForward: () -> Void
     let onSeek: (TimeInterval) -> Void
+    var artworkNamespace: Namespace.ID? = nil
     
     @ObservedObject private var colorManager = AccentColorManager.shared
     @State private var sliderValue: Double = 0
@@ -59,7 +60,7 @@ struct MusicPlayerView: View {
                     if item.isLossless {
                         losslessBadge
                     }
-                    if let artist = item.mainArtistName {
+                    if let artist = viewModel.artistName(for: item) {
                         Text(artist)
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -135,7 +136,7 @@ struct MusicPlayerView: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 20)
-        .glassEffect(colorManager.glassTintEnabled ? .regular.tint(avgColor.opacity(0.8 * colorManager.glassTintIntensity)) : .regular, in: .capsule)
+        .glassEffect((colorManager.glassTintEnabled ? Glass.regular.tint(avgColor.opacity(0.8 * colorManager.glassTintIntensity)) : Glass.regular).interactive(), in: .capsule)
         .onChange(of: currentTime) {
             if !isEditingSlider {
                 sliderValue = currentTime
@@ -155,6 +156,7 @@ struct MusicPlayerView: View {
             // Row 1: artwork + track info + transport
             HStack(spacing: 10) {
                 artworkView(size: 44)
+                    .playerArtwork(in: artworkNamespace)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.Name)
@@ -164,7 +166,7 @@ struct MusicPlayerView: View {
                         if item.isLossless {
                             losslessBadge
                         }
-                        if let artist = item.mainArtistName {
+                        if let artist = viewModel.artistName(for: item) {
                             Text(artist)
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
@@ -212,7 +214,8 @@ struct MusicPlayerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassEffect(colorManager.glassTintEnabled ? .regular.tint(avgColor.opacity(0.8 * colorManager.glassTintIntensity)) : .regular, in: .rect(cornerRadius: 16))
+        // Interactive: the bar answers the finger before it opens the full player.
+        .glassEffect((colorManager.glassTintEnabled ? Glass.regular.tint(avgColor.opacity(0.8 * colorManager.glassTintIntensity)) : Glass.regular).interactive(), in: .rect(cornerRadius: 16))
         .onChange(of: currentTime) {
             if !isEditingSlider {
                 sliderValue = currentTime
@@ -238,6 +241,7 @@ struct MusicPlayerView: View {
                 .id(artworkURL)
                 .frame(width: 48, height: 48)
                 .clipped()
+                .playerArtwork(in: artworkNamespace)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(item.Name.lowercased())
@@ -336,10 +340,12 @@ struct MusicPlayerView: View {
         guard let url else { avgColor = .clear; return }
         let key = ImageCacheService.shared.key(for: url)
 
-        // Try cache first
-        if let cached = ImageCacheService.shared.getImage(forKey: key),
-           let color = cached.averageColor() {
-            avgColor = color
+        // Try cache first (off the main thread: it may read from disk)
+        let cachedColor = await Task.detached(priority: .utility) { () -> Color? in
+            ImageCacheService.shared.getImage(forKey: key)?.averageColor()
+        }.value
+        if let cachedColor {
+            avgColor = cachedColor
             return
         }
 

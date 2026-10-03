@@ -45,7 +45,8 @@ struct FavoritesView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 12) {
                                 ForEach(viewModel.favoriteAlbums) { album in
-                                    VerticalAlbumCard(album: album, cardWidth: 160)
+                                    VerticalAlbumCard(album: album, cardWidth: 160, zoomGroup: "favorites")
+                                        .coverFlow()
                                 }
                             }
                         }
@@ -83,6 +84,7 @@ struct FavoritesView: View {
                             LazyHStack(spacing: 12) {
                                 ForEach(viewModel.favoriteTracks) { track in
                                     VerticalTrackCard(track: track, queue: viewModel.audioItems, cardWidth: 160)
+                                        .coverFlow()
                                 }
                             }
                         }
@@ -90,7 +92,8 @@ struct FavoritesView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 170)
         }
         .navigationTitle("Preferiti")
     }

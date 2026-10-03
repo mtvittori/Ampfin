@@ -268,6 +268,84 @@ class JellyfinAPIService {
         }
     }
     
+    // MARK: - Lyrics
+
+    struct LyricLine: Identifiable, Equatable {
+        let id: Int
+        let text: String
+        /// Seconds from the start, for synced lyrics; nil for plain text.
+        let start: TimeInterval?
+    }
+
+    /// The song's lyrics from the server ([] when it has none).
+    func fetchLyrics(itemId: String) async throws -> [LyricLine] {
+        guard let url = URL(string: "\(serverUrl)/Audio/\(itemId)/Lyrics") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { return [] }
+        if http.statusCode == 404 { return [] }
+        guard (200...299).contains(http.statusCode),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let lines = json["Lyrics"] as? [[String: Any]] else { return [] }
+        return lines.enumerated().map { index, line in
+            let ticks = (line["Start"] as? NSNumber)?.doubleValue
+            return LyricLine(id: index, text: line["Text"] as? String ?? "",
+                             start: ticks.map { $0 / 10_000_000 })
+        }
+    }
+
+    // MARK: - Settings backup
+
+    /// Display Preferences of client "amplifin" for this user: Jellyfin keeps them per
+    /// user on the server, and their CustomPrefs hold the settings backup.
+    private var backupPreferencesURL: URL? {
+        URL(string: "\(serverUrl)/DisplayPreferences/amplifin-backup?userId=\(userId)&client=amplifin")
+    }
+
+    private func loadBackupPreferences() async throws -> [String: Any] {
+        guard let url = backupPreferencesURL else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.decodingError(CocoaError(.coderReadCorrupt))
+        }
+        return json
+    }
+
+    /// The backup on the server, or nil when there isn't one yet.
+    func loadSettingsBackup() async throws -> (settings: [String: Any], date: Date)? {
+        let prefs = try await loadBackupPreferences()
+        guard let custom = prefs["CustomPrefs"] as? [String: Any],
+              let encoded = custom["amplifinBackup"] as? String else { return nil }
+        let date = (custom["amplifinBackupDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+        return (try SettingsBackupCoding.decode(encoded), date)
+    }
+
+    /// Stores the backup, keeping every other preference as the server had it.
+    func saveSettingsBackup(_ settings: [String: Any], date: Date) async throws {
+        guard let url = backupPreferencesURL else { throw APIError.invalidURL }
+        var prefs = try await loadBackupPreferences()
+        var custom = prefs["CustomPrefs"] as? [String: Any] ?? [:]
+        custom["amplifinBackup"] = try SettingsBackupCoding.encode(settings)
+        custom["amplifinBackupDate"] = ISO8601DateFormatter().string(from: date)
+        prefs["CustomPrefs"] = custom
+        prefs["Client"] = "amplifin"
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: prefs)
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+
     private func addAuthHeader(to request: inout URLRequest) {
         let authHeader = "MediaBrowser Client=\"amplifin\", Device=\"\(JellyfinAPIService.deviceName)\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\", Token=\"\(token)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")

@@ -1,4 +1,8 @@
 import SwiftUI
+#if os(iOS)
+import MediaPlayer
+import AVFoundation
+#endif
 
 /// Full-screen expanded Now Playing view (iOS only).
 /// Displayed inline in ContentView. Its Liquid Glass elements use the
@@ -28,6 +32,7 @@ struct NowPlayingFullView: View {
     let onSeek: (TimeInterval) -> Void
 
     @Binding var isExpanded: Bool
+    var artworkNamespace: Namespace.ID? = nil
 
     @ObservedObject private var colorManager = AccentColorManager.shared
     @State private var avgColor: Color = .clear
@@ -43,6 +48,13 @@ struct NowPlayingFullView: View {
     @State private var isEditingSlider: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var showAudioInfo: Bool = false
+    @State private var panel: PlayerPanel = .artwork
+    /// Page color and text color from the cover, as on the album pages.
+    @State private var palette = HeroPalette.neutral
+    private var fg: Color { palette.foreground }
+    #if os(iOS)
+    @ObservedObject private var systemVolume = SystemVolume.shared
+    #endif
 
     /// Volume is temporarily hidden per product decision — flip this back to `true` to restore it.
     private let isVolumeSliderEnabled = false
@@ -62,67 +74,20 @@ struct NowPlayingFullView: View {
                 if colorManager.zuneStyleEnabled {
                     ZuneBackdrop(urls: viewModel.artistImageURLs(for: item), dim: 0.4)
                 } else {
-                    artworkBackground(size: geo.size, safeAreaInsets: geo.safeAreaInsets)
+                    // Same as the album pages: one color taken from the cover's bottom edge,
+                    // a little deeper towards the bottom.
+                    ZStack {
+                        palette.background
+                        LinearGradient(colors: [.clear, .black.opacity(palette.isLight ? 0.08 : 0.25)],
+                                       startPoint: .center, endPoint: .bottom)
+                    }
+                    .animation(.easeInOut(duration: 0.6), value: palette)
                 }
 
-                VStack(spacing: 0) {
-                    // Drag indicator — positioned well below Dynamic Island / status bar
-                    Capsule()
-                        .fill(.white.opacity(0.4))
-                        .frame(width: 36, height: 5)
-                        .padding(.top, max(geo.safeAreaInsets.top, 59) + 16)
-
-                    Spacer()
-
-                    if colorManager.zuneStyleEnabled {
-                        zuneHeader
-                    } else {
-                        // Large artwork — fill more width
-                        let artworkSize = min(geo.size.width - 48, 380)
-                        artworkView(size: artworkSize)
-                            .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-                            .scaleEffect(isPlaying ? 1.0 : 0.9)
-                            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: isPlaying)
-
-                        Spacer().frame(height: 36)
-
-                        trackInfoPlate
-                            .padding(.horizontal, 32)
-                    }
-
-                    Spacer().frame(height: 28)
-
-                    seekSection
-                        .padding(.horizontal, 32)
-
-                    Spacer().frame(height: 26)
-
-                    transportCapsule
-                        .padding(.horizontal, 24)
-
-                    if isVolumeSliderEnabled {
-                        Spacer().frame(height: 28)
-
-                        HStack(spacing: 10) {
-                            Image(systemName: "speaker.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.5))
-                            volumeSlider
-                                .tint(.white.opacity(0.6))
-                            Image(systemName: "speaker.wave.3.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.5))
-                        }
-                        .padding(.horizontal, 32)
-                    }
-
-                    Spacer().frame(height: 16)
-
-                    audioInfoRow
-                        .padding(.horizontal, 24)
-
-                    Spacer(minLength: 0)
-                        .frame(maxHeight: max(geo.safeAreaInsets.bottom, 34) + 16)
+                if colorManager.zuneStyleEnabled {
+                    zuneLayout(geo)
+                } else {
+                    appleMusicLayout(geo)
                 }
             }
             .offset(y: dragOffset)
@@ -154,6 +119,22 @@ struct NowPlayingFullView: View {
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
+        .task(id: item.AlbumId ?? item.id) {
+            guard let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200),
+                  let image = await ZuneImageLoader.shared.firstImage(from: [url]),
+                  let colors = HeroPalette(image: image) else { return }
+            palette = colors
+        }
+        #if DEBUG
+        // Test-only: `-provaPannello lyrics|queue` opens the player on that panel.
+        .onAppear {
+            switch UserDefaults.standard.string(forKey: "provaPannello") {
+            case "lyrics": panel = .lyrics
+            case "queue": panel = .queue
+            default: break
+            }
+        }
+        #endif
         // Audio details live in a sheet, not in an expanding glass plate: the numbers
         // sit on an opaque background where they stay legible, and the player's glass
         // row never changes height.
@@ -166,10 +147,312 @@ struct NowPlayingFullView: View {
 
     private func loadAverageColor(url: URL?) async {
         guard let url else { avgColor = .clear; return }
-        let key = ImageCacheService.shared.key(for: url)
-        if let cached = ImageCacheService.shared.getImage(forKey: key),
-           let color = cached.averageColor() {
-            avgColor = color
+        let color = await Task.detached(priority: .utility) { () -> Color? in
+            ImageCacheService.shared.getImage(forKey: ImageCacheService.shared.key(for: url))?.averageColor()
+        }.value
+        if let color { avgColor = color }
+    }
+
+    // MARK: - Apple Music layout
+
+    /// What fills the top of the Apple Music layout.
+    enum PlayerPanel { case artwork, lyrics, queue }
+
+    /// Apple Music on iOS 26: the cover edge to edge at the top, fading into its own
+    /// blurred colors; title and artist with star and "⋯"; thick scrubber with the
+    /// remaining time and the format; bare transport glyphs; volume; lyrics · output · queue.
+    private func appleMusicLayout(_ geo: GeometryProxy) -> some View {
+        let width = geo.size.width
+        let showingArtwork = panel == .artwork
+
+        return ZStack(alignment: .top) {
+            // Full-bleed cover, fading out downwards. Hidden behind lyrics and queue.
+            CachedAsyncImage(url: viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200), targetSize: width,
+                content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                placeholder: { Color.clear }
+            )
+            .id(item.AlbumId ?? item.id)
+            .frame(width: width, height: width)
+            .clipped()
+            .mask {
+                LinearGradient(stops: [.init(color: .black, location: 0.5), .init(color: .clear, location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .playerArtwork(in: artworkNamespace)
+            // Edge to edge it stays put when paused: shrinking would open gaps at the sides.
+            .opacity(showingArtwork ? 1 : 0)
+            .animation(.easeInOut(duration: 0.35), value: panel)
+
+
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(fg.opacity(0.5))
+                    .frame(width: 36, height: 5)
+                    .padding(.top, max(geo.safeAreaInsets.top, 59) + 6)
+
+                Group {
+                    switch panel {
+                    case .artwork:
+                        Spacer(minLength: 0)
+                    case .lyrics:
+                        LyricsPanel(item: item, currentTime: currentTime, color: fg, onSeek: onSeek)
+                    case .queue:
+                        QueuePanel(color: fg)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .transition(.opacity)
+
+                titleRow
+                    .padding(.horizontal, 32)
+                    .padding(.top, 14)
+
+                appleScrubber
+                    .padding(.horizontal, 32)
+                    .padding(.top, 20)
+
+                transportRow
+                    .padding(.top, 22)
+
+                #if os(iOS)
+                volumeRow
+                    .padding(.horizontal, 32)
+                    .padding(.top, 26)
+                #endif
+
+                bottomRow
+                    .padding(.horizontal, 44)
+                    .padding(.top, 24)
+                    .padding(.bottom, max(geo.safeAreaInsets.bottom, 34) + 4)
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: panel)
+        // Glass buttons and menus follow the page: light on light covers, dark on dark.
+        .environment(\.colorScheme, palette.isLight ? .light : .dark)
+    }
+
+    private var titleRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.Name)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(fg)
+                    .lineLimit(1)
+                Text(viewModel.artistName(for: item) ?? "")
+                    .font(.title3)
+                    .foregroundStyle(fg.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+
+            Button {
+                viewModel.toggleFavoriteTrack(item.id)
+            } label: {
+                Image(systemName: viewModel.isTrackFavorite(item.id) ? "star.fill" : "star")
+                    .font(.system(size: 17, weight: .semibold))
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: viewModel.isTrackFavorite(item.id))
+                    .foregroundStyle(fg)
+                    .frame(width: 40, height: 40)
+                    .glassEffect(.regular.interactive(), in: .circle)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(viewModel.isTrackFavorite(item.id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti")
+
+            Menu {
+                Button {
+                    viewModel.toggleRepeatMode()
+                } label: {
+                    Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
+                }
+                Button {
+                    viewModel.playerManager.refreshAudioOutputInfo()
+                    showAudioInfo = true
+                } label: {
+                    Label("Info audio", systemImage: "info.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(fg)
+                    .frame(width: 40, height: 40)
+                    .glassEffect(.regular.interactive(), in: .circle)
+            }
+            .accessibilityLabel("Altro")
+        }
+    }
+
+    /// Thick bar, elapsed and remaining time, the format badge in the middle.
+    private var appleScrubber: some View {
+        let shown = isEditingSlider ? sliderValue : currentTime
+        let maxDuration = duration > 0 ? duration : 1
+
+        return VStack(spacing: 8) {
+            PlayerBar(fraction: shown / maxDuration, isDragging: isEditingSlider, color: fg) { fraction in
+                isEditingSlider = true
+                sliderValue = fraction * maxDuration
+            } onEnded: {
+                isEditingSlider = false
+                onSeek(sliderValue)
+            }
+            .accessibilityLabel("Posizione")
+            .accessibilityValue(formatTime(shown))
+
+            ZStack {
+                HStack {
+                    Text(formatTime(shown))
+                    Spacer()
+                    Text("-" + formatTime(max(duration - shown, 0)))
+                }
+                .font(.footnote.weight(.semibold).monospacedDigit())
+                .foregroundStyle(fg.opacity(0.7))
+
+                Button {
+                    viewModel.playerManager.refreshAudioOutputInfo()
+                    showAudioInfo = true
+                } label: {
+                    Label(item.isLossless ? "Lossless" : (item.MediaSources?.first?.Container?.uppercased() ?? "Audio"),
+                          systemImage: "waveform")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(fg.opacity(0.85))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(fg.opacity(0.15), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Info audio")
+            }
+        }
+    }
+
+    private var transportRow: some View {
+        HStack {
+            Button(action: onBackward) {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 40))
+                    .frame(width: 80, height: 70)
+            }
+            .accessibilityLabel("Precedente")
+            Spacer()
+            Button(action: onPlayPause) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 58))
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 90, height: 80)
+            }
+            .accessibilityLabel(isPlaying ? "Pausa" : "Riproduci")
+            Spacer()
+            Button(action: onForward) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 40))
+                    .frame(width: 80, height: 70)
+            }
+            .accessibilityLabel("Successivo")
+        }
+        .buttonStyle(PressableStyle())
+        .foregroundStyle(fg)
+        .padding(.horizontal, 22)
+    }
+
+    #if os(iOS)
+    private var volumeRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "speaker.fill")
+                .font(.footnote)
+            PlayerBar(fraction: Double(systemVolume.level), isDragging: false, color: fg) { fraction in
+                systemVolume.set(Float(fraction))
+            } onEnded: {}
+            .accessibilityLabel("Volume")
+            .accessibilityValue("\(Int(systemVolume.level * 100))%")
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.footnote)
+        }
+        .foregroundStyle(fg.opacity(0.75))
+        // A hidden system volume view: it moves the real volume and keeps the HUD away.
+        .background(HiddenVolumeView().frame(width: 1, height: 1).opacity(0.001))
+    }
+    #endif
+
+    private var bottomRow: some View {
+        HStack {
+            panelButton(.lyrics, systemImage: "quote.bubble", label: "Testo")
+            Spacer()
+            AirPlayView()
+                .frame(width: 44, height: 44)
+                .tint(fg)
+            Spacer()
+            panelButton(.queue, systemImage: "list.bullet", label: "Coda")
+        }
+    }
+
+    /// Lyrics and queue toggle like Apple Music's: the active one sits on a light square.
+    private func panelButton(_ target: PlayerPanel, systemImage: String, label: String) -> some View {
+        let active = panel == target
+        return Button {
+            withAnimation(.easeInOut(duration: 0.35)) { panel = active ? .artwork : target }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 21, weight: .medium))
+                .foregroundStyle(active ? palette.background : fg.opacity(0.75))
+                .frame(width: 44, height: 40)
+                .background {
+                    if active {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous).fill(fg.opacity(0.9))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+
+    // MARK: - Zune layout
+
+    private func zuneLayout(_ geo: GeometryProxy) -> some View {
+        VStack(spacing: 0) {
+            // Drag indicator — positioned well below Dynamic Island / status bar
+            Capsule()
+                .fill(.white.opacity(0.4))
+                .frame(width: 36, height: 5)
+                .padding(.top, max(geo.safeAreaInsets.top, 59) + 16)
+
+            Spacer()
+
+            zuneHeader
+
+            Spacer().frame(height: 28)
+
+            seekSection
+                .padding(.horizontal, 32)
+
+            Spacer().frame(height: 26)
+
+            transportCapsule
+                .padding(.horizontal, 24)
+
+            if isVolumeSliderEnabled {
+                Spacer().frame(height: 28)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.5))
+                    volumeSlider
+                        .tint(.white.opacity(0.6))
+                    Image(systemName: "speaker.wave.3.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                .padding(.horizontal, 32)
+            }
+
+            Spacer().frame(height: 16)
+
+            audioInfoRow
+                .padding(.horizontal, 24)
+
+            Spacer(minLength: 0)
+                .frame(maxHeight: max(geo.safeAreaInsets.bottom, 34) + 16)
         }
     }
 
@@ -193,6 +476,7 @@ struct NowPlayingFullView: View {
                 .id(artworkURL)
                 .frame(width: 92, height: 92)
                 .clipped()
+                .playerArtwork(in: artworkNamespace)
 
                 VStack(alignment: .leading, spacing: 2) {
                     if item.isLossless {
@@ -233,7 +517,7 @@ struct NowPlayingFullView: View {
                 if item.isLossless {
                     losslessBadge
                 }
-                Text(item.mainArtistName ?? "")
+                Text(viewModel.artistName(for: item) ?? "")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .lineLimit(1)
@@ -396,6 +680,8 @@ struct NowPlayingFullView: View {
                     }
                 )
                 .id(artworkURL)
+                // Alive while playing, like Apple Music's animated backgrounds.
+                .breathing(colorManager.nowPlayingBlurredBackground, moving: isPlaying)
                 .frame(width: insetWidth, height: insetHeight)
                 .clipped()
                 .blur(radius: colorManager.nowPlayingBlurredBackground ? 45 : 0)
@@ -588,3 +874,214 @@ private struct ZuneDriftingText: View {
         .accessibilityLabel(text)
     }
 }
+
+// MARK: - Bars
+
+/// Apple Music's thick bar: white fill on a translucent track, a little fatter while
+/// dragged. Used for the song position and for the volume.
+struct PlayerBar: View {
+    let fraction: Double
+    let isDragging: Bool
+    var color: Color = .white
+    let onChanged: (Double) -> Void
+    let onEnded: () -> Void
+
+    @GestureState private var pressed = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let value = min(max(fraction, 0), 1)
+            let thick = pressed || isDragging
+            ZStack(alignment: .leading) {
+                Capsule().fill(color.opacity(0.28))
+                Capsule().fill(color)
+                    .frame(width: max(geo.size.width * value, thick ? 11 : 7))
+            }
+            .frame(height: thick ? 11 : 7)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($pressed) { _, state, _ in state = true }
+                    .onChanged { drag in onChanged(Double(drag.location.x / max(geo.size.width, 1))) }
+                    .onEnded { _ in onEnded() }
+            )
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: thick)
+        }
+        .frame(height: 24)
+    }
+}
+
+// MARK: - Lyrics
+
+/// The song's lyrics in big bold lines; with synced lyrics the current line lights
+/// up and scrolls to the middle, and tapping a line jumps there.
+private struct LyricsPanel: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let item: AudioItem
+    let currentTime: TimeInterval
+    var color: Color = .white
+    let onSeek: (TimeInterval) -> Void
+
+    @State private var lines: [JellyfinAPIService.LyricLine] = []
+    @State private var loaded = false
+
+    private var currentIndex: Int? {
+        lines.lastIndex { ($0.start ?? .infinity) <= currentTime + 0.2 }
+    }
+
+    var body: some View {
+        Group {
+            if !loaded {
+                ProgressView().tint(color)
+            } else if lines.isEmpty {
+                Text("Testo non disponibile")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(color.opacity(0.6))
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(lines) { line in
+                                Text(line.text.isEmpty ? "♪" : line.text)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(color.opacity(line.id == currentIndex || lines.allSatisfy({ $0.start == nil }) ? 1 : 0.35))
+                                    .scaleEffect(line.id == currentIndex ? 1.0 : 0.97, anchor: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { if let start = line.start { onSeek(start) } }
+                                    .id(line.id)
+                            }
+                        }
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 40)
+                    }
+                    .mask {
+                        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12),
+                                               .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                    }
+                    .onChange(of: currentIndex) {
+                        guard let currentIndex else { return }
+                        withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(currentIndex, anchor: .center) }
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: currentIndex)
+                }
+            }
+        }
+        .task(id: item.Id) {
+            loaded = false
+            lines = await viewModel.lyrics(for: item)
+            loaded = true
+        }
+    }
+}
+
+// MARK: - Queue
+
+/// "A seguire": the songs after the current one; tapping one plays from there.
+private struct QueuePanel: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    var color: Color = .white
+
+    var body: some View {
+        let manager = viewModel.playerManager!
+        let upNext = manager.upNext
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("A seguire")
+                .font(.headline)
+                .foregroundStyle(color)
+                .padding(.horizontal, 32)
+            if upNext.isEmpty {
+                Text("Nessun altro brano in coda.")
+                    .font(.subheadline)
+                    .foregroundStyle(color.opacity(0.6))
+                    .padding(.horizontal, 32)
+                Spacer()
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(upNext) { track in
+                            Button {
+                                manager.play(item: track, in: manager.queue)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 100), targetSize: 44,
+                                        content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                                        placeholder: { RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.15)) }
+                                    )
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(track.Name)
+                                            .font(.body)
+                                            .foregroundStyle(color)
+                                            .lineLimit(1)
+                                        Text(viewModel.artistName(for: track) ?? "")
+                                            .font(.subheadline)
+                                            .foregroundStyle(color.opacity(0.6))
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 24)
+                }
+                // Rows fade out above the title instead of being cut off.
+                .mask {
+                    LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.85),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+            }
+        }
+        .padding(.top, 20)
+    }
+}
+
+#if os(iOS)
+// MARK: - System volume
+
+/// The device volume: read from the audio session, set through a hidden MPVolumeView
+/// (the only way an app may change it).
+@MainActor
+final class SystemVolume: ObservableObject {
+    static let shared = SystemVolume()
+
+    @Published private(set) var level: Float = AVAudioSession.sharedInstance().outputVolume
+    fileprivate weak var slider: UISlider?
+    private var observation: NSKeyValueObservation?
+
+    private init() {
+        observation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let value = session.outputVolume
+            Task { @MainActor in self?.level = value }
+        }
+    }
+
+    func set(_ value: Float) {
+        let clamped = min(max(value, 0), 1)
+        level = clamped
+        slider?.value = clamped
+    }
+}
+
+private struct HiddenVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        DispatchQueue.main.async {
+            SystemVolume.shared.slider = view.subviews.compactMap { $0 as? UISlider }.first
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+#endif

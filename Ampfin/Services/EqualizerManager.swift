@@ -48,6 +48,13 @@ final class EqualizerManager: ObservableObject {
 
     // MARK: - Init
 
+    /// Reads the saved settings again, after a backup has been restored.
+    func reloadFromDefaults() {
+        isEnabled = UserDefaults.standard.bool(forKey: "eq_enabled")
+        selectedPreset = EQPreset(rawValue: UserDefaults.standard.string(forKey: "eq_preset") ?? "") ?? .flat
+        bandGains = UserDefaults.standard.array(forKey: "eq_bandGains") as? [Float] ?? EQPreset.flat.gains
+    }
+
     private init() {
         let savedEnabled = UserDefaults.standard.bool(forKey: "eq_enabled")
         let savedPreset = EQPreset(rawValue: UserDefaults.standard.string(forKey: "eq_preset") ?? "") ?? .flat

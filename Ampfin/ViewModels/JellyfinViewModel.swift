@@ -12,8 +12,17 @@ class JellyfinViewModel: ObservableObject {
 
     // MARK: - Published Properties (Stato dell'UI)
     @Published private(set) var audioItems: [AudioItem] = []
-    @Published private(set) var albums: [AlbumItem] = []
+    @Published private(set) var albums: [AlbumItem] = [] {
+        didSet { albumArtistById = nil }
+    }
+    /// Album id → album artist, built once per library load (rows ask for it constantly).
+    private var albumArtistById: [String: String]?
+    /// Artists after the merge rules (see ArtistMerge.swift); `rawArtists` is the server list.
     @Published private(set) var artists: [ArtistItem] = []
+    private var rawArtists: [ArtistItem] = [] {
+        didSet { rebuildArtistIndex() }
+    }
+    private var artistIndex = ArtistIndex.empty
     @Published private(set) var allAvailableGenres: [String] = []
     
     @Published private(set) var selectedAlbumTracks: [AudioItem] = []
@@ -32,7 +41,10 @@ class JellyfinViewModel: ObservableObject {
     @Published private(set) var currentlyPlayingItem: AudioItem?
     @Published private(set) var isPlaying: Bool = false
     @Published var onIsPlayingChanged: ((Bool) -> Void)?
-    @Published private(set) var currentTime: TimeInterval = 0
+    /// Playback position. It ticks twice a second, so it is published by its own small
+    /// object: as a property of the view model it redrew every screen observing it.
+    let clock = PlaybackClock()
+    var currentTime: TimeInterval { clock.time }
 
     @Published private(set) var recentlyPlayedTracks: [AudioItem] = []
     @Published private(set) var recentlyAddedAlbums: [AlbumItem] = [] // cached recently added albums
@@ -250,6 +262,12 @@ class JellyfinViewModel: ObservableObject {
         }
 
         // Store shared reference for CarPlay access (after all properties initialized)
+        // Merge rules changed: rebuild the artist list (on the next turn, once the change has landed).
+        ArtistMergeStore.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.rebuildArtistIndex() }
+            .store(in: &cancellables)
+
         JellyfinViewModel.shared = self
     }
     
@@ -458,12 +476,12 @@ class JellyfinViewModel: ObservableObject {
         // Reimposta lo stato dell'app
         audioItems = []
         albums = []
-        artists = []
+        rawArtists = []
         allAvailableGenres = []
         selectedAlbumTracks = []
         currentlyPlayingItem = nil
         isPlaying = false
-        currentTime = 0
+        clock.time = 0
         recentlyPlayedTracks = []
         recentlyAddedAlbums = []
         
@@ -560,14 +578,14 @@ class JellyfinViewModel: ObservableObject {
                 let bDate = b.dateAddedDate ?? Date.distantPast
                 return aDate > bDate
             }
-            self.artists = fetchedArtists
+            self.rawArtists = fetchedArtists
             self.allAvailableGenres = Array(Set(fetchedTracks.compactMap { $0.Genres }.flatMap { $0 })).sorted()
             
             // Persist to disk cache
             LibraryCacheService.shared.saveLibrary(
                 tracks: self.audioItems,
                 albums: self.albums,
-                artists: self.artists,
+                artists: self.rawArtists,
                 genres: self.allAvailableGenres
             )
             self.lastLibrarySyncDate = Date()
@@ -618,7 +636,7 @@ class JellyfinViewModel: ObservableObject {
             let bDate = b.dateAddedDate ?? Date.distantPast
             return aDate > bDate
         }
-        self.artists = cached.artists
+        self.rawArtists = cached.artists
         self.allAvailableGenres = cached.genres
         self.lastLibrarySyncDate = cached.lastSyncDate
         return true
@@ -680,7 +698,7 @@ class JellyfinViewModel: ObservableObject {
             names.append(albumArtist)
         }
         for name in names {
-            if let artist = artists.first(where: { $0.Name.caseInsensitiveCompare(name) == .orderedSame }) {
+            if let artist = artist(named: name) {
                 urls += artistImageURLs(for: artist, maxWidth: maxWidth)
             }
         }
@@ -697,12 +715,87 @@ class JellyfinViewModel: ObservableObject {
 
     /// Artist to show for a track, using the album's artist for untagged files.
     func artistName(for item: AudioItem) -> String? {
-        item.mainArtistName ?? albums.first(where: { $0.Id == item.AlbumId })?.AlbumArtist
+        if let name = item.mainArtistName { return name }
+        guard let albumId = item.AlbumId else { return nil }
+        if albumArtistById == nil {
+            albumArtistById = Dictionary(albums.compactMap { album in album.AlbumArtist.map { (album.Id, $0) } },
+                                         uniquingKeysWith: { first, _ in first })
+        }
+        return albumArtistById?[albumId]
     }
 
     func artist(named name: String?) -> ArtistItem? {
         guard let name, !name.isEmpty else { return nil }
-        return artists.first { $0.Name.caseInsensitiveCompare(name) == .orderedSame }
+        if let artist = artistIndex.artist(named: name) { return artist }
+        // A combined credit ("A feat. B") belongs to its first artist.
+        return credits(of: name).dropFirst().lazy.compactMap { self.artistIndex.artist(named: $0) }.first
+    }
+
+    func lyrics(for item: AudioItem) async -> [JellyfinAPIService.LyricLine] {
+        guard let api = apiService else { return [] }
+        return (try? await api.fetchLyrics(itemId: item.Id)) ?? []
+    }
+
+    /// Reads favorites and playback settings again, after a backup has been restored.
+    func reloadSettingsFromDefaults() {
+        let defaults = UserDefaults.standard
+        favoriteAlbumIds = Set(defaults.array(forKey: StorageKeys.favoriteAlbums) as? [String] ?? [])
+        favoriteTrackIds = Set(defaults.array(forKey: StorageKeys.favoriteTracks) as? [String] ?? [])
+        favoritePlaylistIds = Set(defaults.array(forKey: StorageKeys.favoritePlaylists) as? [String] ?? [])
+        if let raw = defaults.string(forKey: StorageKeys.streamQualityWifi), let q = StreamQuality(rawValue: raw) {
+            streamQualityWifi = q
+        }
+        if let raw = defaults.string(forKey: StorageKeys.streamQualityCellular), let q = StreamQuality(rawValue: raw) {
+            streamQualityCellular = q
+        }
+        if let raw = defaults.string(forKey: StorageKeys.libraryRefreshInterval), let i = LibraryRefreshInterval(rawValue: raw) {
+            libraryRefreshInterval = i
+        }
+    }
+
+    /// How many artist entries the server has, before merging.
+    var rawArtistCount: Int { rawArtists.count }
+
+    /// The merged artist whose names include `key` (a comparison key).
+    func artist(forKey key: String) -> ArtistItem? {
+        artists.first { artist in (artist.mergedNames ?? [artist.Name]).contains { ArtistMergeStore.key($0) == key } }
+    }
+
+    func rebuildArtistIndex() {
+        creditKeyCache = [:]
+        artistIndex = ArtistIndex(raw: rawArtists, rules: ArtistMergeStore.shared)
+        artists = artistIndex.artists
+    }
+
+    /// The artists a credit names: itself, plus its parts when combined credits are split.
+    func credits(of name: String?) -> [String] {
+        guard let name, !name.isEmpty else { return [] }
+        guard ArtistMergeStore.shared.splitCredits else { return [name] }
+        let parts = ArtistMergeStore.creditParts(name) { self.artistIndex.artist(named: $0) != nil }
+        return [name] + parts
+    }
+
+    /// Credit string → comparison keys of the artists it names. Pages ask for thousands of
+    /// tracks at every redraw; the names repeat, so each is worked out once.
+    private var creditKeyCache: [String: Set<String>] = [:]
+
+    func creditKeys(of name: String?) -> Set<String> {
+        guard let name, !name.isEmpty else { return [] }
+        if let cached = creditKeyCache[name] { return cached }
+        let keys = Set(credits(of: name).map(ArtistMergeStore.key))
+        creditKeyCache[name] = keys
+        return keys
+    }
+
+    /// Comparison keys of every server name behind an artist entry.
+    private func memberKeys(of artist: ArtistItem) -> Set<String> {
+        Set((artist.mergedNames ?? [artist.Name]).map(ArtistMergeStore.key))
+    }
+
+    /// Albums credited to the artist, under any of its merged names or inside a combined credit.
+    func albums(byArtist artist: ArtistItem) -> [AlbumItem] {
+        let keys = memberKeys(of: artist)
+        return albums.filter { !creditKeys(of: $0.AlbumArtist).isDisjoint(with: keys) }
     }
 
     /// The album artist's photos, then the cover.
@@ -717,10 +810,14 @@ class JellyfinViewModel: ObservableObject {
     /// Tracks where the artist is the album artist or one of the performers. Some files
     /// carry no artist tags at all, so tracks of the artist's albums count too.
     func tracks(byArtist artist: ArtistItem) -> [AudioItem] {
-        let albumIds = Set(albums.filter { $0.AlbumArtist == artist.Name }.map(\.Id))
+        let keys = memberKeys(of: artist)
+        let albumIds = Set(albums(byArtist: artist).map(\.Id))
+        func matches(_ name: String) -> Bool {
+            !creditKeys(of: name).isDisjoint(with: keys)
+        }
         return audioItems.filter { item in
-            (item.AlbumArtists?.contains { $0.Name == artist.Name } ?? false) ||
-            (item.Artists?.contains(artist.Name) ?? false) ||
+            (item.AlbumArtists?.contains { matches($0.Name) } ?? false) ||
+            (item.Artists?.contains(where: matches) ?? false) ||
             (item.AlbumId.map(albumIds.contains) ?? false)
         }
     }
@@ -786,6 +883,8 @@ class JellyfinViewModel: ObservableObject {
         // (Ri)crea i servizi che dipendono dalle credenziali
         self.apiService = JellyfinAPIService(serverUrl: serverUrl, token: token, userId: userId)
         let api = apiService!
+        // Settings backup on the server: restore on a fresh install, then keep it current.
+        Task { await SettingsBackup.shared.connect(api: api) }
         let downloads = DownloadManager.shared
         self.playerManager = AudioPlayerManager(
             streamURLProvider: { [weak self] itemId in
@@ -816,7 +915,7 @@ class JellyfinViewModel: ObservableObject {
         playerManager.$isPlaying.sink { [weak self] isPlaying in
             self?.onIsPlayingChanged?(isPlaying)
         }.store(in: &cancellables)
-        playerManager.$currentTime.assign(to: &$currentTime)
+        playerManager.$currentTime.assign(to: &clock.$time)
         
         playerManager.repeatMode = repeatMode
         
@@ -872,4 +971,9 @@ class JellyfinViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: StorageKeys.userId)
         // keep serverUrl so the user can login again without retyping; remove if you prefer otherwise
     }
+}
+
+/// The playback position on its own, so only the views that show it redraw.
+final class PlaybackClock: ObservableObject {
+    @Published var time: TimeInterval = 0
 }

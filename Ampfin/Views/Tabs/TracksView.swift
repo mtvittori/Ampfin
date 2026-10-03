@@ -31,7 +31,7 @@ struct TracksView: View {
     private var classicBody: some View {
         VStack(spacing: 0) {
             List(filteredTracks) { item in
-                let artworkURL = viewModel.artworkURL(for: item.id, size: 80)
+                let artworkURL = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 160)
                 
                 HStack(spacing: 10) {
                     CachedAsyncImage(url: artworkURL) { image in
@@ -39,12 +39,12 @@ struct TracksView: View {
                     } placeholder: {
                         Rectangle().fill(Color.gray.opacity(0.2)).overlay(Image(systemName: "music.note"))
                     }
-                    .frame(width: 48, height: 48)
-                    .cornerRadius(6)
+                    .frame(width: 60, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.Name).font(.subheadline).lineLimit(1)
-                        Text(item.mainArtistName ?? "Artista Sconosciuto")
+                        Text(item.Name).font(.body).lineLimit(1)
+                        Text(viewModel.artistName(for: item) ?? "Artista Sconosciuto")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -58,6 +58,8 @@ struct TracksView: View {
                     }) {
                         Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
                             .foregroundColor(viewModel.isTrackFavorite(item.id) ? .red : .secondary)
+                            .contentTransition(.symbolEffect(.replace))
+                            .symbolEffect(.bounce, value: viewModel.isTrackFavorite(item.id))
                     }
                     .buttonStyle(PlainButtonStyle())
 
@@ -69,6 +71,8 @@ struct TracksView: View {
                         // Indicate currently playing
                         Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
                             .foregroundColor(.accentColor)
+                            .symbolEffect(.variableColor.iterative, isActive: viewModel.isPlaying)
+                            .contentTransition(.symbolEffect(.replace))
                     }
                     
                     Button(action: {
@@ -86,6 +90,7 @@ struct TracksView: View {
                         let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
                         let playing = viewModel.isPlaying && isCurrent
                         Image(systemName: playing ? "pause.fill" : "play.fill")
+                            .contentTransition(.symbolEffect(.replace))
                             .frame(width: 30, height: 30)
                     }
                     .buttonStyle(.glass)
@@ -98,7 +103,7 @@ struct TracksView: View {
                 }
             }
             .listStyle(.plain)
-            .contentMargins(.bottom, 100)
+            .contentMargins(.bottom, 170)
             #if os(iOS)
             .hidesMiniPlayerOnScroll()
             #endif
