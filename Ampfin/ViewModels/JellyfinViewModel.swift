@@ -935,6 +935,10 @@ class JellyfinViewModel: ObservableObject {
             },
             artworkURLProvider: api.artworkURL(for:size:)
         )
+        // Autoplay's similar songs come from Jellyfin's Instant Mix.
+        playerManager.similarProvider = { item in
+            (try? await api.fetchInstantMix(itemId: item.Id)) ?? []
+        }
         playerManager.markPlayedProvider = { itemId in
             try await api.markItemPlayed(itemId: itemId)
         }
@@ -962,6 +966,18 @@ class JellyfinViewModel: ObservableObject {
                 self?.syncNowPlayingToWidget(item: item, playing: playing)
             }
             .store(in: &cancellables)
+    
+        // Widgets: keep their snapshot current and let their buttons drive the player.
+        // Last, because they observe the player created above.
+        WidgetUpdater.shared.start(viewModel: self)
+        PlaybackCommands.handler = { [weak self] command in
+            guard let manager = self?.playerManager else { return }
+            switch command {
+            case .playPause: manager.togglePlayPause()
+            case .next: manager.forward()
+            case .previous: manager.backward()
+            }
+        }
     }
 
     private func saveCredentials() {

@@ -244,7 +244,8 @@ private struct PickCard: View {
 }
 
 /// A strip of square covers with title and artist underneath.
-private struct AlbumStrip: View {
+/// A strip of square covers with title and artist underneath (also used by Favorites).
+struct AlbumStrip: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let albums: [AlbumItem]
     let group: String
@@ -263,7 +264,7 @@ private struct AlbumStrip: View {
     }
 }
 
-private struct AlbumTile: View {
+struct AlbumTile: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let album: AlbumItem
     let zoomID: String
@@ -293,6 +294,8 @@ private struct AlbumTile: View {
         }
         .buttonStyle(.pressable)
         .contextMenu {
+            AlbumQueueMenuItems(album: album)
+            Divider()
             Button {
                 viewModel.toggleFavoriteAlbum(album.id)
             } label: {

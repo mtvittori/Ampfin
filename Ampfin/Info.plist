@@ -10,6 +10,17 @@
 	<array>
 		<string>it</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.mtvittori.Ampfin</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ampfin</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

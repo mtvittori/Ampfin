@@ -280,6 +280,12 @@ struct NowPlayingFullView: View {
                     Label("Info audio", systemImage: "waveform")
                 }
                 Button {
+                    viewModel.playerManager.toggleShuffle()
+                } label: {
+                    Label(viewModel.playerManager.isShuffled ? "Casuale: attivo" : "Casuale",
+                          systemImage: "shuffle")
+                }
+                Button {
                     viewModel.toggleRepeatMode()
                 } label: {
                     Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
@@ -998,50 +1004,62 @@ private struct QueuePanel: View {
     var color: Color = .white
 
     var body: some View {
-        let manager = viewModel.playerManager!
+        // Observed, so additions and removals show up at once.
+        QueueList(manager: viewModel.playerManager!, color: color)
+    }
+}
+
+private struct QueueList: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject var manager: AudioPlayerManager
+    let color: Color
+
+    var body: some View {
         let upNext = manager.upNext
+        let queued = upNext.filter { !manager.autoplayIds.contains($0.id) }
+        let autoplay = upNext.filter { manager.autoplayIds.contains($0.id) }
 
         VStack(alignment: .leading, spacing: 8) {
-            Text("A seguire")
-                .font(.headline)
-                .foregroundStyle(color)
-                .padding(.horizontal, 32)
+            // Apple Music's queue header: title, then shuffle · repeat · autoplay.
+            HStack {
+                Text("A seguire")
+                    .font(.headline)
+                    .foregroundStyle(color)
+                Spacer()
+                toggle("shuffle", label: "Casuale", isOn: manager.isShuffled) {
+                    withAnimation(.snappy) { manager.toggleShuffle() }
+                }
+                toggle(viewModel.repeatMode.iconName, label: "Ripeti", isOn: viewModel.repeatMode != .off) {
+                    viewModel.toggleRepeatMode()
+                }
+                toggle("infinity", label: "Riproduzione automatica", isOn: manager.autoplayEnabled) {
+                    withAnimation(.snappy) { manager.autoplayEnabled.toggle() }
+                }
+            }
+            .padding(.horizontal, 32)
+
             if upNext.isEmpty {
-                Text("Nessun altro brano in coda.")
+                Text(manager.autoplayEnabled && viewModel.repeatMode == .off ? "Cerco brani simili…" : "Nessun altro brano in coda.")
                     .font(.subheadline)
                     .foregroundStyle(color.opacity(0.6))
                     .padding(.horizontal, 32)
                 Spacer()
             } else {
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(upNext) { track in
-                            Button {
-                                manager.play(item: track, in: manager.queue)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 100), targetSize: 44,
-                                        content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                                        placeholder: { RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.15)) }
-                                    )
-                                    .frame(width: 44, height: 44)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(track.Name)
-                                            .font(.body)
-                                            .foregroundStyle(color)
-                                            .lineLimit(1)
-                                        Text(viewModel.artistName(for: track) ?? "")
-                                            .font(.subheadline)
-                                            .foregroundStyle(color.opacity(0.6))
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.vertical, 6)
-                                .contentShape(Rectangle())
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(queued) { track in row(track) }
+                        if !autoplay.isEmpty {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Riproduzione automatica")
+                                    .font(.headline)
+                                    .foregroundStyle(color)
+                                Text("Brani simili, da Jellyfin")
+                                    .font(.caption)
+                                    .foregroundStyle(color.opacity(0.6))
                             }
-                            .buttonStyle(.plain)
+                            .padding(.top, queued.isEmpty ? 0 : 18)
+                            .padding(.bottom, 4)
+                            ForEach(autoplay) { track in row(track) }
                         }
                     }
                     .padding(.horizontal, 32)
@@ -1056,6 +1074,64 @@ private struct QueuePanel: View {
             }
         }
         .padding(.top, 20)
+    }
+
+    /// A square toggle like Apple Music's: filled when on.
+    private func toggle(_ systemImage: String, label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                // On: the page's text color as fill, the icon in the opposite one.
+                .foregroundStyle(isOn ? (color == .black ? Color.white : Color.black) : color.opacity(0.8))
+                .frame(width: 38, height: 30)
+                .background(isOn ? color.opacity(0.9) : color.opacity(0.15),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+
+    private func row(_ track: AudioItem) -> some View {
+        Button {
+            manager.play(item: track, in: manager.queue)
+        } label: {
+            HStack(spacing: 12) {
+                CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 100), targetSize: 44,
+                    content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                    placeholder: { RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.15)) }
+                )
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.Name)
+                        .font(.body)
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                    Text(viewModel.artistName(for: track) ?? "")
+                        .font(.subheadline)
+                        .foregroundStyle(color.opacity(0.6))
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                viewModel.playNext([track])
+            } label: {
+                Label("Riproduci dopo", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+            Button(role: .destructive) {
+                withAnimation { manager.removeFromQueue(track) }
+            } label: {
+                Label("Rimuovi dalla coda", systemImage: "minus.circle")
+            }
+        }
     }
 }
 

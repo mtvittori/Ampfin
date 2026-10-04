@@ -463,6 +463,8 @@ struct ZuneTrackRow: View {
         } label: {
             Label("Riproduci", systemImage: "play.fill")
         }
+        QueueMenuItems(tracks: [track])
+        Divider()
         Button {
             viewModel.toggleFavoriteTrack(track.id)
         } label: {
@@ -509,6 +511,8 @@ struct ZuneAlbumTile: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            AlbumQueueMenuItems(album: album)
+            Divider()
             Button {
                 viewModel.toggleFavoriteAlbum(album.id)
             } label: {
@@ -537,6 +541,9 @@ struct ZuneTrackTile: View {
                      highlighted: viewModel.currentlyPlayingItem?.id == track.id)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            QueueMenuItems(tracks: [track])
+        }
     }
 }
 

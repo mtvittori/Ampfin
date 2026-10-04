@@ -267,6 +267,8 @@ struct AlbumTracksListView: View {
         let allDownloaded = !tracks.isEmpty && tracks.allSatisfy { downloadManager.isDownloaded($0.Id) }
 
         return Menu {
+            QueueMenuItems(tracks: tracks)
+            Divider()
             Button {
                 showAlbumInfo = true
             } label: {

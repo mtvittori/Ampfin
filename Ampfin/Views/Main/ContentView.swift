@@ -61,10 +61,36 @@ struct ContentView: View {
 
     var body: some View {
         mainBody
+            // "Riprodotto dopo" / "Aggiunto alla coda" drops in at the top.
+            .overlay(alignment: .top) { QueueToast() }
+            // Links from the widgets: ampfin://player and ampfin://album/<id>.
+            .onOpenURL(perform: openLink)
+            .sheet(item: $linkedAlbum) { album in
+                NavigationStack {
+                    AlbumTracksListView(album: album)
+                }
+                .environmentObject(viewModel)
+            }
             // The accent can follow the cover of the album that's playing.
             .task(id: viewModel.currentlyPlayingItem.map { $0.AlbumId ?? $0.id }) {
                 await updateArtworkAccent()
             }
+    }
+
+    @State private var linkedAlbum: AlbumItem?
+
+    private func openLink(_ url: URL) {
+        guard url.scheme == "ampfin" else { return }
+        switch url.host() {
+        case "player":
+            guard viewModel.currentlyPlayingItem != nil else { return }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) { showFullPlayer = true }
+        case "album":
+            let id = url.lastPathComponent
+            linkedAlbum = viewModel.albums.first { $0.Id == id }
+        default:
+            break
+        }
     }
 
     private func updateArtworkAccent() async {

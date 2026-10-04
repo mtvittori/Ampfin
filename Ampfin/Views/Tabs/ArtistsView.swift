@@ -15,7 +15,12 @@ struct ArtistsView: View {
 
     // Use global search query to filter artists
     private var displayedArtists: [ArtistItem] {
+        // On iPhone the search field filters only the Cerca tab.
+        #if os(macOS)
         let query = viewModel.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        #else
+        let query = ""
+        #endif
         if query.isEmpty {
             return viewModel.artists
         } else {

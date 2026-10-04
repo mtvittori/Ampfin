@@ -10,7 +10,12 @@ struct AlbumsView: View {
     
     // If the global search query is present, filter albums accordingly
     private var displayedAlbums: [AlbumItem] {
+        // On iPhone the search field filters only the Cerca tab.
+        #if os(macOS)
         let query = viewModel.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        #else
+        let query = ""
+        #endif
         if query.isEmpty {
             return viewModel.albums
         } else {
@@ -72,6 +77,8 @@ struct AlbumsView: View {
                             }
                             .buttonStyle(.pressable)
                             .contextMenu {
+                                AlbumQueueMenuItems(album: album)
+                                Divider()
                                 Button("Cambia copertina", systemImage: "photo") { coverAlbum = album }
                             }
                             .gridSettle()

@@ -385,6 +385,14 @@ struct VerticalTrackCard: View {
         }
         .frame(width: cardWidth, height: cardWidth)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contextMenu {
+            Button {
+                viewModel.playerManager.play(item: track, in: queue)
+            } label: {
+                Label("Riproduci", systemImage: "play.fill")
+            }
+            QueueMenuItems(tracks: [track])
+        }
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
@@ -470,6 +478,9 @@ struct VerticalAlbumCard: View {
             .zoomSource(zoomID)
         }
         .buttonStyle(.pressable)
+        .contextMenu {
+            AlbumQueueMenuItems(album: album)
+        }
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }

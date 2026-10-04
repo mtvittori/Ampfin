@@ -7,8 +7,13 @@ struct TracksView: View {
     @State private var searchText = ""
 
     var filteredTracks: [AudioItem] {
-        // prefer the global search query if present
+        // On iPhone the search field filters only the Cerca tab; on the Mac the toolbar
+        // search filters the section in view.
+        #if os(macOS)
         let query = viewModel.globalSearchQuery.isEmpty ? searchText : viewModel.globalSearchQuery
+        #else
+        let query = searchText
+        #endif
         if query.isEmpty {
             return viewModel.audioItems
         } else {
@@ -30,7 +35,13 @@ struct TracksView: View {
 
     private var classicBody: some View {
         VStack(spacing: 0) {
-            List(filteredTracks) { item in
+            List {
+                // Play everything or shuffle, as at the top of an album.
+                LibraryPlayButtons(tracks: filteredTracks)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 10, trailing: 16))
+
+                ForEach(filteredTracks) { item in
                 let artworkURL = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 160)
                 
                 HStack(spacing: 10) {
@@ -100,6 +111,16 @@ struct TracksView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     viewModel.playerManager.play(item: item, in: filteredTracks)
+                }
+                .queueSwipeActions(item, viewModel: viewModel)
+                .contextMenu {
+                    Button {
+                        viewModel.playerManager.play(item: item, in: filteredTracks)
+                    } label: {
+                        Label("Riproduci", systemImage: "play.fill")
+                    }
+                    QueueMenuItems(tracks: [item])
+                }
                 }
             }
             .listStyle(.plain)

@@ -35,7 +35,26 @@ final class AudioPlayerManager: ObservableObject {
     /// Incremented each time we schedule new audio; stale completion handlers are ignored.
     private var playbackGeneration: Int = 0
 
-    private var playQueue: [AudioItem] = []
+    /// Published so the "A seguire" list follows additions and removals.
+    @Published private var playQueue: [AudioItem] = []
+
+    /// Shuffle of what's coming up; `originalQueue` brings the order back when it goes off.
+    @Published private(set) var isShuffled = false
+    private var originalQueue: [AudioItem]?
+
+    /// Autoplay: when the queue is about to end, similar songs are added (Jellyfin's
+    /// Instant Mix), like Spotify's autoplay. Saved across launches.
+    @Published var autoplayEnabled: Bool = UserDefaults.standard.object(forKey: "autoplayEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoplayEnabled, forKey: "autoplayEnabled")
+            if autoplayEnabled { topUpAutoplay() } else { removeAutoplayItems() }
+        }
+    }
+    /// Songs added by autoplay, shown under their own heading in the queue.
+    @Published private(set) var autoplayIds: Set<String> = []
+    /// Similar songs for a song; injected by the view model (Jellyfin Instant Mix).
+    var similarProvider: ((AudioItem) async -> [AudioItem])?
+    private var autoplayTask: Task<Void, Never>?
 
     /// The whole play queue, for the "Up next" list.
     var queue: [AudioItem] { playQueue }
@@ -85,6 +104,13 @@ final class AudioPlayerManager: ObservableObject {
             return
         }
 
+        // A new list from outside starts a new context: no shuffle, no autoplay songs.
+        // Moving within the queue (next, previous, repeat) passes the queue itself.
+        if queue.map(\.id) != playQueue.map(\.id) {
+            isShuffled = false
+            originalQueue = nil
+            autoplayIds = []
+        }
         self.playQueue = queue
         stop()
 
@@ -138,6 +164,7 @@ final class AudioPlayerManager: ObservableObject {
             }
             self.playAudioFile(at: file)
             self.prefetchNext()
+            self.topUpAutoplay()
         }
     }
 
@@ -210,10 +237,107 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
+    // MARK: - Queue editing
+
+    /// "Riproduci dopo": right after the current song, in this order. With nothing
+    /// playing, the songs start now. A song already further down the queue moves up.
+    func playNext(_ items: [AudioItem]) {
+        insert(items, afterCurrent: true)
+    }
+
+    /// "Aggiungi alla coda": at the end of the queue.
+    func addToQueue(_ items: [AudioItem]) {
+        insert(items, afterCurrent: false)
+    }
+
+    /// Takes a song out of what's coming up (never the one playing).
+    func removeFromQueue(_ item: AudioItem) {
+        guard item.id != currentlyPlayingItem?.id else { return }
+        playQueue.removeAll { $0.id == item.id }
+        prefetchNext()
+    }
+
+    private func insert(_ items: [AudioItem], afterCurrent: Bool) {
+        guard let current = currentlyPlayingItem,
+              playQueue.contains(where: { $0.id == current.id }) else {
+            if let first = items.first { play(item: first, in: items) }
+            return
+        }
+        // Songs are found by id in the queue, so each may appear only once.
+        let adding = items.filter { $0.id != current.id }
+        let ids = Set(adding.map(\.id))
+        var queue = playQueue.filter { !ids.contains($0.id) }
+        let index = queue.firstIndex { $0.id == current.id } ?? queue.count - 1
+        if afterCurrent {
+            queue.insert(contentsOf: adding, at: index + 1)
+        } else {
+            queue.append(contentsOf: adding)
+        }
+        playQueue = queue
+        prefetchNext()
+    }
+
     func playAlbumShuffled(tracks: [AudioItem]) {
         guard !tracks.isEmpty else { return }
         let shuffledQueue = tracks.shuffled()
         play(item: shuffledQueue.first!, in: shuffledQueue)
+        isShuffled = true
+        originalQueue = tracks
+    }
+
+    // MARK: - Shuffle and autoplay
+
+    /// Shuffles the songs after the current one; off again, they go back in the order
+    /// they had. The song playing never changes.
+    func toggleShuffle() {
+        guard let current = currentlyPlayingItem,
+              let index = playQueue.firstIndex(where: { $0.id == current.id }) else { return }
+        if isShuffled {
+            let original = originalQueue ?? playQueue
+            let present = Set(playQueue.map(\.id))
+            // The original order, then anything added while shuffled.
+            var restored = original.filter { present.contains($0.id) }
+            let known = Set(restored.map(\.id))
+            restored += playQueue.filter { !known.contains($0.id) }
+            playQueue = restored
+            originalQueue = nil
+            isShuffled = false
+        } else {
+            originalQueue = playQueue
+            let played = Array(playQueue[...index])
+            playQueue = played + playQueue[(index + 1)...].shuffled()
+            isShuffled = true
+            // With one song or none ahead, there's nothing to mix: autoplay brings some.
+            topUpAutoplay()
+        }
+        prefetchNext()
+    }
+
+    /// Keeps a few songs ahead when autoplay is on: when fewer than two are left, adds
+    /// up to 15 songs similar to the current one that aren't in the queue yet.
+    private func topUpAutoplay() {
+        guard autoplayEnabled, repeatMode == .off, upNext.count < 2,
+              let current = currentlyPlayingItem, let similarProvider, autoplayTask == nil else { return }
+        autoplayTask = Task { @MainActor in
+            defer { autoplayTask = nil }
+            let similar = await similarProvider(current)
+            guard currentlyPlayingItem?.id == current.id, upNext.count < 2 else { return }
+            let present = Set(playQueue.map(\.id))
+            var adding = similar.filter { !present.contains($0.id) }
+            if isShuffled { adding.shuffle() }
+            adding = Array(adding.prefix(15))
+            guard !adding.isEmpty else { return }
+            playQueue += adding
+            autoplayIds.formUnion(adding.map(\.id))
+            prefetchNext()
+        }
+    }
+
+    private func removeAutoplayItems() {
+        guard !autoplayIds.isEmpty else { return }
+        let current = currentlyPlayingItem?.id
+        playQueue.removeAll { autoplayIds.contains($0.id) && $0.id != current }
+        autoplayIds = []
     }
 
     func togglePlayPause() {

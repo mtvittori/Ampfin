@@ -270,6 +270,15 @@ class JellyfinAPIService {
         }
     }
     
+    // MARK: - Instant Mix
+
+    /// Songs similar to this one (Jellyfin's Instant Mix), without the song itself.
+    func fetchInstantMix(itemId: String, limit: Int = 30) async throws -> [AudioItem] {
+        let endpoint = "/Items/\(itemId)/InstantMix?userId=\(userId)&limit=\(limit)&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+        let response: AudioResponse = try await fetch(endpoint: endpoint)
+        return response.Items.filter { $0.Id != itemId }
+    }
+
     // MARK: - Item details
 
     /// Everything the server knows about an item (song or album), as raw JSON.

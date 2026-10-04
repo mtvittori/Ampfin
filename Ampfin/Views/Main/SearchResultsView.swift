@@ -355,5 +355,9 @@ struct SearchResultsView: View {
         .onTapGesture {
             viewModel.playerManager.play(item: track, in: allTracks)
         }
+        .queueSwipeActions(track, viewModel: viewModel)
+        .contextMenu {
+            QueueMenuItems(tracks: [track])
+        }
     }
 }

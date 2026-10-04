@@ -11,6 +11,8 @@ import SwiftUI
 struct HeroPalette: Equatable {
     var background: Color
     var isLight: Bool
+    /// The color as numbers, for the widgets' snapshot.
+    private(set) var rgb: [Double] = [0.14, 0.14, 0.14]
 
     var foreground: Color { isLight ? .black : .white }
     var secondary: Color { foreground.opacity(0.62) }
@@ -44,6 +46,7 @@ struct HeroPalette: Equatable {
         let n = Double(2 * size) * 255
         r /= n; g /= n; b /= n
         background = Color(red: r, green: g, blue: b)
+        rgb = [r, g, b]
         isLight = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.62
     }
 }
@@ -334,6 +337,8 @@ struct HeroTrackRow: View {
             } label: {
                 Label("Riproduci", systemImage: "play.fill")
             }
+            QueueMenuItems(tracks: [track])
+            Divider()
             Button {
                 viewModel.toggleFavoriteTrack(track.id)
             } label: {

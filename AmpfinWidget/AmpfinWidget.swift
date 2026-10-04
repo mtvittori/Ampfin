@@ -1,365 +1,457 @@
+// AmpfinWidget.swift
+// amplifin's widgets, on iPhone and Mac:
+// - "In riproduzione": the song playing on its cover's color, with real buttons
+//   (previous, play/pause, next) and, in the large size, what comes next. Also on
+//   the Lock Screen (circular, rectangular, inline).
+// - "Ascoltati di recente" and "Preferiti": covers that open their album.
+// - Control Center: play/pause and next.
+// The app writes WidgetSnapshot into the App Group and reloads the timelines when
+// something changes; the widgets only read it.
+
 import WidgetKit
 import SwiftUI
+import AppIntents
 #if os(macOS)
 import AppKit
 #else
 import UIKit
 #endif
 
-// NowPlayingInfo and SharedDefaults are defined in Ampfin/Shared/NowPlayingInfo.swift
-// which is included in both the main app and widget targets.
+// MARK: - Timeline
 
-// MARK: - Color Extraction
-
-/// Extracts dominant colors from a CGImage by sampling pixels in a grid.
-private func extractColors(from cgImage: CGImage) -> (primary: Color, secondary: Color) {
-    let width = 40
-    let height = 40
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-    guard let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: width * 4,
-        space: colorSpace,
-        bitmapInfo: bitmapInfo
-    ) else {
-        return (.gray, .gray.opacity(0.5))
-    }
-    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-    guard let data = context.data else {
-        return (.gray, .gray.opacity(0.5))
-    }
-    let pointer = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
-
-    // Collect color buckets (simplified k-means with 2 clusters)
-    var rSum1: Double = 0, gSum1: Double = 0, bSum1: Double = 0, count1: Double = 0
-    var rSum2: Double = 0, gSum2: Double = 0, bSum2: Double = 0, count2: Double = 0
-
-    let totalPixels = width * height
-    for i in 0..<totalPixels {
-        let offset = i * 4
-        let r = Double(pointer[offset])
-        let g = Double(pointer[offset + 1])
-        let b = Double(pointer[offset + 2])
-
-        // Brightness threshold to separate light/dark regions
-        let brightness = (r + g + b) / (3.0 * 255.0)
-        if brightness > 0.5 {
-            rSum1 += r; gSum1 += g; bSum1 += b; count1 += 1
-        } else {
-            rSum2 += r; gSum2 += g; bSum2 += b; count2 += 1
-        }
-    }
-
-    let primary: Color
-    let secondary: Color
-
-    if count1 > 0 && count2 > 0 {
-        // Use the darker cluster as primary, lighter as secondary
-        primary = Color(
-            red: rSum2 / (count2 * 255),
-            green: gSum2 / (count2 * 255),
-            blue: bSum2 / (count2 * 255)
-        )
-        secondary = Color(
-            red: rSum1 / (count1 * 255),
-            green: gSum1 / (count1 * 255),
-            blue: bSum1 / (count1 * 255)
-        )
-    } else {
-        let total = count1 + count2
-        let rAll = (rSum1 + rSum2) / max(total, 1)
-        let gAll = (gSum1 + gSum2) / max(total, 1)
-        let bAll = (bSum1 + bSum2) / max(total, 1)
-        primary = Color(red: rAll / 255, green: gAll / 255, blue: bAll / 255)
-        secondary = primary.opacity(0.6)
-    }
-
-    return (primary, secondary)
-}
-
-// MARK: - Timeline Provider
-
-struct NowPlayingProvider: TimelineProvider {
-    func placeholder(in context: Context) -> NowPlayingEntry {
-        NowPlayingEntry(
-            date: Date(),
-            trackName: "Titolo brano",
-            artistName: "Artista",
-            albumName: "Album",
-            isPlaying: true,
-            artworkImage: nil,
-            primaryColor: .gray,
-            secondaryColor: .gray.opacity(0.5)
-        )
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (NowPlayingEntry) -> Void) {
-        buildEntry { entry in
-            completion(entry)
-        }
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<NowPlayingEntry>) -> Void) {
-        buildEntry { entry in
-            let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date()
-            let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
-            completion(timeline)
-        }
-    }
-
-    private func buildEntry(completion: @escaping (NowPlayingEntry) -> Void) {
-        guard let info = SharedDefaults.loadNowPlaying() else {
-            completion(NowPlayingEntry(
-                date: Date(),
-                trackName: nil,
-                artistName: nil,
-                albumName: nil,
-                isPlaying: false,
-                artworkImage: nil,
-                primaryColor: .gray,
-                secondaryColor: .gray.opacity(0.5)
-            ))
-            return
-        }
-
-        let artworkURLString = info.artworkURLString
-        guard !artworkURLString.isEmpty, let url = URL(string: artworkURLString) else {
-            completion(NowPlayingEntry(
-                date: Date(),
-                trackName: info.trackName,
-                artistName: info.artistName,
-                albumName: info.albumName,
-                isPlaying: info.isPlaying,
-                artworkImage: nil,
-                primaryColor: .gray,
-                secondaryColor: .gray.opacity(0.5)
-            ))
-            return
-        }
-
-        // Download artwork synchronously on the timeline provider's background thread
-        var request = URLRequest(url: url)
-        // Add auth token header for Jellyfin
-        if !info.token.isEmpty {
-            request.setValue("MediaBrowser Token=\"\(info.token)\"", forHTTPHeaderField: "Authorization")
-        }
-
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            var image: Image? = nil
-            var primary: Color = .gray
-            var secondary: Color = .gray.opacity(0.5)
-
-            #if os(macOS)
-            if let data, let nsImage = NSImage(data: data),
-               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                image = Image(nsImage: nsImage)
-                let colors = extractColors(from: cgImage)
-                primary = colors.primary
-                secondary = colors.secondary
-            }
-            #else
-            if let data, let uiImage = UIImage(data: data),
-               let cgImage = uiImage.cgImage {
-                image = Image(uiImage: uiImage)
-                let colors = extractColors(from: cgImage)
-                primary = colors.primary
-                secondary = colors.secondary
-            }
-            #endif
-
-            completion(NowPlayingEntry(
-                date: Date(),
-                trackName: info.trackName,
-                artistName: info.artistName,
-                albumName: info.albumName,
-                isPlaying: info.isPlaying,
-                artworkImage: image,
-                primaryColor: primary,
-                secondaryColor: secondary
-            ))
-        }
-        task.resume()
-    }
-}
-
-// MARK: - Timeline Entry
-
-struct NowPlayingEntry: TimelineEntry {
+struct SnapshotEntry: TimelineEntry {
     let date: Date
-    let trackName: String?
-    let artistName: String?
-    let albumName: String?
-    let isPlaying: Bool
-    let artworkImage: Image?
-    let primaryColor: Color
-    let secondaryColor: Color
+    let snapshot: WidgetSnapshot
 }
 
-// MARK: - Widget Views
+struct SnapshotProvider: TimelineProvider {
+    func placeholder(in context: Context) -> SnapshotEntry {
+        SnapshotEntry(date: Date(), snapshot: .placeholder)
+    }
 
-struct NowPlayingWidgetView: View {
-    @Environment(\.widgetFamily) var family
-    var entry: NowPlayingEntry
+    func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
+        let snapshot = context.isPreview ? (WidgetStore.load() ?? .placeholder) : (WidgetStore.load() ?? WidgetSnapshot())
+        completion(SnapshotEntry(date: Date(), snapshot: snapshot))
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
+        let entry = SnapshotEntry(date: Date(), snapshot: WidgetStore.load() ?? WidgetSnapshot())
+        // The app reloads on every change; this is only a safety net.
+        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(3600))))
+    }
+}
+
+// MARK: - Pieces
+
+/// A saved cover, or a quiet placeholder. Desaturated in tinted and clear modes.
+private struct Cover: View {
+    let itemId: String
+    var corner: CGFloat = 10
 
     var body: some View {
-        if let trackName = entry.trackName {
-            switch family {
-            case .systemSmall:
-                smallView(trackName: trackName)
-            case .systemMedium:
-                mediumView(trackName: trackName)
-            default:
-                mediumView(trackName: trackName)
-            }
-        } else {
-            emptyStateView
-        }
-    }
-
-    // MARK: - Small Widget
-
-    private func smallView(trackName: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: entry.isPlaying ? "waveform" : "pause.circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer()
-            }
-
-            Spacer()
-
-            // Artwork
-            if let image = entry.artworkImage {
+        Group {
+            if let image = WidgetStore.image(for: itemId) {
                 image
                     .resizable()
+                    .widgetAccentedRenderingMode(.desaturated)
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 52, height: 52)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(trackName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-
-                if let artist = entry.artistName {
-                    Text(artist)
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(12)
-        .containerBackground(for: .widget) {
-            LinearGradient(
-                colors: [entry.secondaryColor, entry.primaryColor],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
-
-    // MARK: - Medium Widget
-
-    private func mediumView(trackName: String) -> some View {
-        HStack(spacing: 14) {
-            // Artwork
-            if let image = entry.artworkImage {
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
             } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                Rectangle()
                     .fill(.white.opacity(0.15))
-                    .frame(width: 80, height: 80)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.title2)
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
+                    .overlay(Image(systemName: "music.note").foregroundStyle(.white.opacity(0.6)))
             }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    }
+}
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: entry.isPlaying ? "waveform" : "pause.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.8))
-                    Text(entry.isPlaying ? "In riproduzione" : "In pausa")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.6))
+/// A round button that runs a playback intent in the app.
+private struct ControlButton<I: AppIntent>: View {
+    let intent: I
+    let systemImage: String
+    var size: CGFloat = 36
+    var filled = false
+    let palette: WidgetSnapshot.Palette
+
+    var body: some View {
+        Button(intent: intent) {
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.42, weight: .bold))
+                .foregroundStyle(filled ? palette.background : palette.foreground)
+                .frame(width: size, height: size)
+                .background(filled ? palette.foreground : palette.foreground.opacity(0.14), in: Circle())
+                .widgetAccentable(filled)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Now playing
+
+struct NowPlayingView: View {
+    @Environment(\.widgetFamily) private var family
+    let snapshot: WidgetSnapshot
+
+    private var palette: WidgetSnapshot.Palette { snapshot.palette }
+
+    var body: some View {
+        Group {
+            if let track = snapshot.nowPlaying {
+                switch family {
+                case .accessoryCircular: circular
+                case .accessoryRectangular: rectangular(track)
+                case .accessoryInline: inline(track)
+                case .systemSmall: small(track)
+                case .systemLarge, .systemExtraLarge: large(track)
+                default: medium(track)
                 }
+            } else {
+                empty
+            }
+        }
+        .widgetURL(URL(string: "ampfin://player"))
+        .containerBackground(for: .widget) {
+            palette.background
+        }
+    }
 
-                Text(trackName)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+    private var playPause: some View {
+        ControlButton(intent: PlayPauseIntent(), systemImage: snapshot.isPlaying ? "pause.fill" : "play.fill",
+                      size: 44, filled: true, palette: palette)
+    }
 
-                if let artist = entry.artistName {
-                    Text(artist)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.8))
-                        .lineLimit(1)
-                }
+    private func titles(_ track: WidgetSnapshot.Track, big: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(track.title)
+                .font(big ? .title3.weight(.bold) : .headline)
+                .foregroundStyle(palette.foreground)
+                .lineLimit(big ? 2 : 1)
+            Text(track.artist)
+                .font(big ? .body : .subheadline)
+                .foregroundStyle(palette.secondary)
+                .lineLimit(1)
+        }
+    }
 
-                if let album = entry.albumName, !album.isEmpty {
-                    Text(album)
+    private func small(_ track: WidgetSnapshot.Track) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Cover(itemId: track.albumId, corner: 10)
+                    .frame(width: 68, height: 68)
+                    .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                Spacer(minLength: 4)
+                playPause
+            }
+            Spacer(minLength: 6)
+            titles(track)
+        }
+    }
+
+    private func medium(_ track: WidgetSnapshot.Track) -> some View {
+        HStack(spacing: 14) {
+            Cover(itemId: track.albumId, corner: 12)
+                .aspectRatio(1, contentMode: .fit)
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+            VStack(alignment: .leading, spacing: 0) {
+                titles(track)
+                if !track.album.isEmpty {
+                    Text(track.album)
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(palette.secondary)
                         .lineLimit(1)
+                        .padding(.top, 2)
+                }
+                Spacer(minLength: 6)
+                HStack(spacing: 10) {
+                    ControlButton(intent: PreviousTrackIntent(), systemImage: "backward.fill", palette: palette)
+                    playPause
+                    ControlButton(intent: NextTrackIntent(), systemImage: "forward.fill", palette: palette)
                 }
             }
-
             Spacer(minLength: 0)
         }
-        .padding()
-        .containerBackground(for: .widget) {
-            LinearGradient(
-                colors: [entry.secondaryColor, entry.primaryColor],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+    }
+
+    private func large(_ track: WidgetSnapshot.Track) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 14) {
+                Cover(itemId: track.albumId, corner: 14)
+                    .frame(width: 130, height: 130)
+                    .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+                VStack(alignment: .leading, spacing: 10) {
+                    titles(track, big: true)
+                    HStack(spacing: 10) {
+                        ControlButton(intent: PreviousTrackIntent(), systemImage: "backward.fill", palette: palette)
+                        playPause
+                        ControlButton(intent: NextTrackIntent(), systemImage: "forward.fill", palette: palette)
+                    }
+                }
+            }
+            if !snapshot.upNext.isEmpty {
+                Text("A seguire")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.secondary)
+                ForEach(snapshot.upNext.prefix(3)) { next in
+                    HStack(spacing: 10) {
+                        Cover(itemId: next.albumId, corner: 6)
+                            .frame(width: 34, height: 34)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(next.title)
+                                .font(.subheadline)
+                                .foregroundStyle(palette.foreground)
+                                .lineLimit(1)
+                            Text(next.artist)
+                                .font(.caption)
+                                .foregroundStyle(palette.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 
-    // MARK: - Empty State
-
-    private var emptyStateView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "music.note")
-                .font(.title)
-                .foregroundStyle(.secondary)
-            Text("Nessun brano in riproduzione")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+    private var circular: some View {
+        ZStack {
+            AccessoryWidgetBackground()
+            Button(intent: PlayPauseIntent()) {
+                Image(systemName: snapshot.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.title2.weight(.semibold))
+            }
+            .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-        .containerBackground(.fill.tertiary, for: .widget)
+    }
+
+    private func rectangular(_ track: WidgetSnapshot.Track) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
+                Label(snapshot.isPlaying ? "In riproduzione" : "In pausa",
+                      systemImage: snapshot.isPlaying ? "waveform" : "pause.fill")
+                    .font(.caption2.weight(.semibold))
+                    .widgetAccentable()
+                Text(track.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(track.artist)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func inline(_ track: WidgetSnapshot.Track) -> some View {
+        Label("\(track.title) · \(track.artist)", systemImage: snapshot.isPlaying ? "waveform" : "music.note")
+    }
+
+    @ViewBuilder
+    private var empty: some View {
+        switch family {
+        case .accessoryInline:
+            Label("amplifin", systemImage: "music.note")
+        case .accessoryCircular:
+            ZStack {
+                AccessoryWidgetBackground()
+                Image(systemName: "music.note").font(.title2)
+            }
+        case .accessoryRectangular:
+            VStack(alignment: .leading) {
+                Text("amplifin").font(.headline).widgetAccentable()
+                Text("Niente in riproduzione").font(.caption)
+            }
+        default:
+            VStack(alignment: .leading, spacing: 4) {
+                Image(systemName: "music.note")
+                    .font(.title2)
+                    .foregroundStyle(palette.foreground)
+                Spacer()
+                Text("Niente in riproduzione")
+                    .font(.headline)
+                    .foregroundStyle(palette.foreground)
+                Text("Tocca per aprire amplifin")
+                    .font(.caption)
+                    .foregroundStyle(palette.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
-// MARK: - Widget Configuration
+// MARK: - Album grids
+
+struct AlbumGridView: View {
+    @Environment(\.widgetFamily) private var family
+    let title: String
+    let systemImage: String
+    let albums: [WidgetSnapshot.Album]
+    let emptyText: String
+
+    var body: some View {
+        Group {
+            if albums.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    header
+                    Spacer()
+                    Text(emptyText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if family == .systemSmall, let first = albums.first {
+                Link(destination: albumURL(first)) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        header
+                        Cover(itemId: first.id, corner: 10)
+                            .aspectRatio(1, contentMode: .fit)
+                        Text(first.title)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    header
+                    grid
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .containerBackground(for: .widget) {
+            Self.background
+        }
+    }
+
+    private var header: some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tint)
+            .widgetAccentable()
+    }
+
+    private var columns: Int { family == .systemExtraLarge ? 6 : (family == .systemLarge ? 3 : 4) }
+    private var rows: Int { family == .systemLarge || family == .systemExtraLarge ? 2 : 1 }
+
+    private var grid: some View {
+        let shown = Array(albums.prefix(columns * rows))
+        return Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+            ForEach(0..<rows, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { column in
+                        let index = row * columns + column
+                        if index < shown.count {
+                            tile(shown[index])
+                        } else {
+                            Color.clear
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func tile(_ album: WidgetSnapshot.Album) -> some View {
+        Link(destination: albumURL(album)) {
+            VStack(alignment: .leading, spacing: 3) {
+                Cover(itemId: album.id, corner: 8)
+                    .aspectRatio(1, contentMode: .fit)
+                if family != .systemMedium {
+                    Text(album.title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    Text(album.artist)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// The system background on both platforms.
+    private static var background: Color {
+        #if os(macOS)
+        Color(nsColor: .windowBackgroundColor)
+        #else
+        Color(uiColor: .systemBackground)
+        #endif
+    }
+
+    private func albumURL(_ album: WidgetSnapshot.Album) -> URL {
+        URL(string: "ampfin://album/\(album.id)")!
+    }
+}
+
+
+// MARK: - Widgets
 
 struct AmpfinNowPlayingWidget: Widget {
-    let kind: String = "AmpfinNowPlaying"
-
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: NowPlayingProvider()) { entry in
-            NowPlayingWidgetView(entry: entry)
+        StaticConfiguration(kind: WidgetKinds.nowPlaying, provider: SnapshotProvider()) { entry in
+            NowPlayingView(snapshot: entry.snapshot)
         }
         .configurationDisplayName("In riproduzione")
-        .description("Mostra il brano attualmente in riproduzione su amplifin.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .description("Il brano in ascolto sul colore della sua copertina, con i comandi e cosa viene dopo.")
+        .supportedFamilies(Self.families)
+    }
+
+    static var families: [WidgetFamily] {
+        #if os(iOS)
+        return [.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline]
+        #else
+        return [.systemSmall, .systemMedium, .systemLarge]
+        #endif
     }
 }
+
+struct AmpfinRecentWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: WidgetKinds.recent, provider: SnapshotProvider()) { entry in
+            AlbumGridView(title: "Ascoltati di recente", systemImage: "clock.arrow.circlepath",
+                          albums: entry.snapshot.recentAlbums, emptyText: "Ascolta qualcosa e lo ritrovi qui.")
+        }
+        .configurationDisplayName("Ascoltati di recente")
+        .description("Gli ultimi album ascoltati: toccane uno per aprirlo.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct AmpfinFavoritesWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: WidgetKinds.favorites, provider: SnapshotProvider()) { entry in
+            AlbumGridView(title: "Preferiti", systemImage: "heart.fill",
+                          albums: entry.snapshot.favoriteAlbums, emptyText: "Tocca il cuore su un album per vederlo qui.")
+        }
+        .configurationDisplayName("Album preferiti")
+        .description("I tuoi album preferiti: toccane uno per aprirlo.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+// MARK: - Control Center
+
+#if os(iOS)
+struct PlayPauseControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "AmpfinPlayPause") {
+            ControlWidgetButton(action: PlayPauseIntent()) {
+                Label("amplifin", systemImage: "playpause.fill")
+            }
+        }
+        .displayName("Riproduci/Pausa")
+        .description("Mette in pausa o riprende la musica di amplifin.")
+    }
+}
+
+struct NextTrackControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "AmpfinNext") {
+            ControlWidgetButton(action: NextTrackIntent()) {
+                Label("Successivo", systemImage: "forward.fill")
+            }
+        }
+        .displayName("Brano successivo")
+        .description("Passa al brano successivo in amplifin.")
+    }
+}
+#endif
