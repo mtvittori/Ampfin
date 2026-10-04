@@ -5,8 +5,16 @@ struct FavoritesView: View {
 
     /// Apple Music-style: Play / Shuffle on the favorite songs, the favorite albums as a
     /// strip of covers, then the songs with their covers; swipes and long press queue them.
-    @ViewBuilder
     var body: some View {
+        #if os(macOS)
+        MacFavoritesView()
+        #else
+        phoneBody
+        #endif
+    }
+
+    @ViewBuilder
+    private var phoneBody: some View {
         let tracks = viewModel.favoriteTracks
         let albums = viewModel.favoriteAlbums
 

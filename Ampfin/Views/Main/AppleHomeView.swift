@@ -22,41 +22,9 @@ enum TopBarStyle: String, CaseIterable, Identifiable {
 struct AppleHomeView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
 
-    private struct Pick: Identifiable {
-        let id: String
-        let caption: String
-        let album: AlbumItem
-    }
-
     /// Worked out when the library or the history changes, not at every redraw
     /// (it shuffles the whole album list).
-    @State private var topPicks: [Pick] = []
-
-    /// One card each from what you played, what you love and what just arrived,
-    /// then a few you haven't heard in a while.
-    private func computePicks() -> [Pick] {
-        var picks: [Pick] = []
-        var used = Set<String>()
-        func add(_ album: AlbumItem?, _ caption: String) {
-            guard let album, used.insert(album.Id).inserted else { return }
-            picks.append(Pick(id: "\(caption)-\(album.Id)", caption: caption, album: album))
-        }
-        add(viewModel.recentlyPlayedAlbums.first, "Da riprendere")
-        add(viewModel.favoriteAlbums.randomElementStable(seed: dayOfYear), "Tra i tuoi preferiti")
-        add(viewModel.recentlyAddedAlbums.first, "Appena aggiunto")
-        if let artist = viewModel.recentlyPlayedAlbums.first?.AlbumArtist {
-            add(viewModel.albums.first { $0.AlbumArtist == artist && !used.contains($0.Id) }, "Altro di \(artist)")
-        }
-        let played = Set(viewModel.recentlyPlayedAlbums.map(\.Id))
-        for album in viewModel.albums.filter({ !played.contains($0.Id) }).shuffledStable(seed: dayOfYear).prefix(3) {
-            add(album, "Da riscoprire")
-        }
-        return picks
-    }
-
-    private var dayOfYear: Int {
-        Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
-    }
+    @State private var topPicks: [HomePick] = []
 
     private var recentAlbums: [AlbumItem] {
         viewModel.recentlyPlayedAlbums.isEmpty ? Array(viewModel.albums.prefix(12)) : Array(viewModel.recentlyPlayedAlbums.prefix(12))
@@ -70,6 +38,15 @@ struct AppleHomeView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacHomeView()
+        #else
+        phoneBody
+        #endif
+    }
+
+    #if os(iOS)
+    private var phoneBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !topPicks.isEmpty {
@@ -125,7 +102,7 @@ struct AppleHomeView: View {
             await viewModel.fetchAllLibraryData()
         }
         .task(id: "\(viewModel.albums.count)|\(viewModel.recentlyPlayedAlbums.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
-            topPicks = computePicks()
+            topPicks = viewModel.homePicks()
         }
         .task {
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()
@@ -133,6 +110,7 @@ struct AppleHomeView: View {
             await viewModel.fetchRecentlyPlayedTracksIfNeeded()
         }
     }
+    #endif
 
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
@@ -332,5 +310,41 @@ private struct SeededGenerator: RandomNumberGenerator {
         state ^= state >> 7
         state ^= state << 17
         return state
+    }
+}
+
+// MARK: - Top picks
+
+struct HomePick: Identifiable {
+    let id: String
+    let caption: String
+    let album: AlbumItem
+}
+
+extension JellyfinViewModel {
+    private static var dayOfYear: Int {
+        Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
+    }
+
+    /// One card each from what you played, what you love and what just arrived,
+    /// then a few you haven't heard in a while.
+    func homePicks() -> [HomePick] {
+        var picks: [HomePick] = []
+        var used = Set<String>()
+        func add(_ album: AlbumItem?, _ caption: String) {
+            guard let album, used.insert(album.Id).inserted else { return }
+            picks.append(HomePick(id: "\(caption)-\(album.Id)", caption: caption, album: album))
+        }
+        add(recentlyPlayedAlbums.first, "Da riprendere")
+        add(favoriteAlbums.randomElementStable(seed: Self.dayOfYear), "Tra i tuoi preferiti")
+        add(recentlyAddedAlbums.first, "Appena aggiunto")
+        if let artist = recentlyPlayedAlbums.first?.AlbumArtist {
+            add(albums.first { $0.AlbumArtist == artist && !used.contains($0.Id) }, "Altro di \(artist)")
+        }
+        let played = Set(recentlyPlayedAlbums.map(\.Id))
+        for album in albums.filter({ !played.contains($0.Id) }).shuffledStable(seed: Self.dayOfYear).prefix(3) {
+            add(album, "Da riscoprire")
+        }
+        return picks
     }
 }

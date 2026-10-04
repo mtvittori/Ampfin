@@ -10,6 +10,14 @@ struct ArtistAlbumsView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacArtistPage(artist: artist)
+        #else
+        phoneBody
+        #endif
+    }
+
+    private var phoneBody: some View {
         page
         .sheet(item: $infoTrack) { track in
             ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)

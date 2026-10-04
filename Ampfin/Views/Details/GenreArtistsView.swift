@@ -13,6 +13,14 @@ struct GenreArtistsView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacGenrePage(genreName: genreName)
+        #else
+        phoneBody
+        #endif
+    }
+
+    private var phoneBody: some View {
         ScrollView {
             if !filteredAlbums.isEmpty {
                 Text("Album").font(.title2).padding(.leading)

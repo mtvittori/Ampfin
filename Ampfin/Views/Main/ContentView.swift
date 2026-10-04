@@ -125,77 +125,8 @@ struct ContentView: View {
 
     #if os(macOS)
     private var macOSContent: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                NavigationSplitView(columnVisibility: $columnVisibility) {
-                    List(selection: $selectedSidebar) {
-                        ForEach(SidebarItem.allCases.filter { $0 != .search }) { item in
-                            Label(item.title, systemImage: item.systemImage)
-                                .tag(item)
-                                .onTapGesture {
-                                    selectedSidebar = item
-                                }
-                        }
-                    }
-                    .listStyle(.sidebar)
-                    .frame(minWidth: 160)
-                } detail: {
-                    Group {
-                        detailView(for: selectedSidebar)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .frame(minWidth: 800, minHeight: 600)
-
-                macOSPlayerOverlay
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
-        .frame(minWidth: 800, minHeight: 600)
-        .task { await loadLibraryIfNeeded() }
-        // HIG (Search fields: iPadOS, macOS): "Put a search field at the trailing side
-        // of the toolbar." `.searchable(placement: .toolbar)` does exactly that natively
-        // (trailing toolbar on macOS) instead of a hand-rolled, centered TextField.
-        .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca...")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    Task { await viewModel.fetchAllLibraryData() }
-                } label: {
-                    Label("Aggiorna", systemImage: "arrow.clockwise")
-                }
-            }
-
-            ToolbarItem(placement: .automatic) {
-                Button(action: { viewModel.logout() }) {
-                    Label("Logout", systemImage: "person.crop.circle.badge.xmark")
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var macOSPlayerOverlay: some View {
-        if let playingItem = viewModel.currentlyPlayingItem {
-            ClockReader(clock: viewModel.clock) { time in MusicPlayerView(
-                item: playingItem,
-                isPlaying: viewModel.isPlaying,
-                currentTime: time,
-                duration: playingItem.duration ?? 0,
-                artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
-                onPlayPause: { viewModel.playerManager.togglePlayPause() },
-                onBackward: { viewModel.playerManager.backward() },
-                onForward: { viewModel.playerManager.forward() },
-                onSeek: { time in viewModel.playerManager.seek(to: time) }
-            ) }
-            // Without a max width, the seek Slider inside greedily fills the HStack,
-            // stretching the bar edge-to-edge on wide windows instead of staying a
-            // compact, centered pill (as in macOS Music's own now-playing bar).
-            .frame(maxWidth: 720)
-            .padding(.horizontal)
-            .padding(.bottom, 20)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
+        MacShell()
+            .task { await loadLibraryIfNeeded() }
     }
     #endif
 

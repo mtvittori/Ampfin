@@ -15,6 +15,18 @@ struct JellyfinMusicApp: App {
                 .tint(colorManager.effectiveTint)
                 .onAppear { appDelegate.viewModel = viewModel }
         }
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1280, height: 820)
+
+        // ⌘, as in every Mac app.
+        Settings {
+            NavigationStack {
+                SettingsView()
+            }
+            .environmentObject(viewModel)
+            .tint(colorManager.effectiveTint)
+            .frame(width: 600, height: 700)
+        }
     }
 }
 #else

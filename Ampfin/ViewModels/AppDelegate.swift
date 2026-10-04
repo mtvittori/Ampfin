@@ -17,6 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        WindowSnapshot.scheduleIfRequested()
+        #endif
         viewModel?.$isPlaying.sink { _ in
             AppDelegate.refreshDockMenu()
         }.store(in: &cancellables)

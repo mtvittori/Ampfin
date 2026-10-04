@@ -12,6 +12,14 @@ struct AlbumTracksListView: View {
     @State private var introRunning = true
 
     var body: some View {
+        #if os(macOS)
+        MacAlbumPage(album: album)
+        #else
+        phoneBody
+        #endif
+    }
+
+    private var phoneBody: some View {
         content
         .task {
             await viewModel.fetchAlbumTracks(albumId: album.id)

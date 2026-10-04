@@ -15,6 +15,14 @@ struct GenresView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacGenresView()
+        #else
+        phoneBody
+        #endif
+    }
+
+    private var phoneBody: some View {
         NavigationStack {
             List(displayedGenres, id: \.self) { genreName in
                 NavigationLink(genreName, value: genreName)
