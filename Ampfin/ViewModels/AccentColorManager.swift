@@ -11,7 +11,6 @@ class AccentColorManager: ObservableObject {
     private static let glassTintKey = "glassTintEnabled"
     private static let glassTintIntensityKey = "glassTintIntensity"
     private static let nowPlayingBlurKey = "nowPlayingBlurredBackground"
-    private static let zuneStyleKey = "zuneStyleEnabled"
     private static let followsArtworkKey = "accentFollowsArtwork"
 
     @Published var accentColor: Color {
@@ -46,14 +45,6 @@ class AccentColorManager: ObservableObject {
         }
     }
 
-    /// When true, artists and Now Playing use the Zune look: the artist's photo
-    /// panning slowly behind huge lowercase type.
-    @Published var zuneStyleEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(zuneStyleEnabled, forKey: Self.zuneStyleKey)
-        }
-    }
-
     /// When true, the accent follows the cover of the album that's playing.
     @Published var followsArtwork: Bool {
         didSet {
@@ -73,12 +64,6 @@ class AccentColorManager: ObservableObject {
 
     init() {
         self.followsArtwork = UserDefaults.standard.bool(forKey: Self.followsArtworkKey)
-        // Zune style defaults to ON for first launch
-        if UserDefaults.standard.object(forKey: Self.zuneStyleKey) == nil {
-            self.zuneStyleEnabled = true
-        } else {
-            self.zuneStyleEnabled = UserDefaults.standard.bool(forKey: Self.zuneStyleKey)
-        }
         // Glass tint defaults to ON for first launch
         if UserDefaults.standard.object(forKey: Self.glassTintKey) == nil {
             self.glassTintEnabled = true
@@ -113,7 +98,6 @@ class AccentColorManager: ObservableObject {
     func reload() {
         let fresh = AccentColorManager()
         followsArtwork = fresh.followsArtwork
-        zuneStyleEnabled = fresh.zuneStyleEnabled
         glassTintEnabled = fresh.glassTintEnabled
         glassTintIntensity = fresh.glassTintIntensity
         nowPlayingBlurredBackground = fresh.nowPlayingBlurredBackground

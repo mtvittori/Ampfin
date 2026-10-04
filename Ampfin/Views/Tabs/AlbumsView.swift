@@ -2,8 +2,6 @@
 import SwiftUI
 
 struct AlbumsView: View {
-    @ObservedObject private var colorManager = AccentColorManager.shared
-    @Environment(\.zunePivotHeaderHeight) private var pivotHeader
     @EnvironmentObject var viewModel: JellyfinViewModel
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 20)]
     @State private var coverAlbum: AlbumItem?
@@ -27,25 +25,10 @@ struct AlbumsView: View {
         }
     }
 
-    var body: some View {
-        if pivotHeader > 0 {
-            ZuneAlbumsView(albums: displayedAlbums)
-        } else if colorManager.zuneStyleEnabled {
-            NavigationStack {
-                ZuneAlbumsView(albums: displayedAlbums)
-                    .navigationDestination(for: AlbumItem.self) { album in
-                        AlbumTracksListView(album: album)
-                    }
-            }
-        } else {
-            classicBody
-        }
-    }
-
     /// On iPhone the tab's own navigation stack (ContentView) is the only one: a nested
     /// stack here would carry the custom top bar into the album pages it opens.
     @ViewBuilder
-    private var classicBody: some View {
+    var body: some View {
         #if os(iOS)
         albumsGrid
         #else

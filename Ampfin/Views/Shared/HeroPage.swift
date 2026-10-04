@@ -90,7 +90,7 @@ struct HeroPage<Controls: View, Content: View>: View {
         .tint(palette.foreground)
         .animation(.easeInOut(duration: 0.5), value: palette)
         .task(id: imageURLs) {
-            guard let loaded = await ZuneImageLoader.shared.firstImage(from: imageURLs) else { return }
+            guard let loaded = await ImageLoader.shared.firstImage(from: imageURLs) else { return }
             image = loaded
             if let colors = HeroPalette(image: loaded) { palette = colors }
         }
@@ -316,7 +316,7 @@ struct HeroTrackRow: View {
                 Spacer(minLength: 8)
 
                 if let duration = track.duration {
-                    Text(ZuneFormat.time(duration))
+                    Text(TimeFormat.time(duration))
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(palette.secondary)
                 }

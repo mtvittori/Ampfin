@@ -36,11 +36,7 @@ struct MusicPlayerView: View {
         #if os(macOS)
         macOSLayout
         #else
-        if colorManager.zuneStyleEnabled {
-            zuneCompactLayout
-        } else {
-            compactLayout
-        }
+        compactLayout
         #endif
     }
 
@@ -224,73 +220,6 @@ struct MusicPlayerView: View {
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
-    }
-    #endif
-
-    #if os(iOS)
-    /// Zune bar: flat black, square cover, lowercase Selawik, a thin accent progress line.
-    private var zuneCompactLayout: some View {
-        let progress = duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
-
-        return VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                CachedAsyncImage(url: artworkURL,
-                    content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                    placeholder: { Rectangle().fill(.white.opacity(0.12)) }
-                )
-                .id(artworkURL)
-                .frame(width: 48, height: 48)
-                .clipped()
-                .playerArtwork(in: artworkNamespace)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(item.Name.lowercased())
-                        .font(.zune(19, .semilight, relativeTo: .body))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text((viewModel.artistName(for: item) ?? "").lowercased())
-                        .font(.zune(14, .regular, relativeTo: .caption))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 4)
-
-                Button(action: onBackward) {
-                    Image(systemName: "backward.fill")
-                        .font(.footnote)
-                        .frame(width: 36, height: 36)
-                }
-                .accessibilityLabel("Precedente")
-                Button(action: onPlayPause) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 38, height: 38)
-                        .overlay(Circle().stroke(.white, lineWidth: 2))
-                }
-                .accessibilityLabel(isPlaying ? "Pausa" : "Riproduci")
-                Button(action: onForward) {
-                    Image(systemName: "forward.fill")
-                        .font(.footnote)
-                        .frame(width: 36, height: 36)
-                }
-                .accessibilityLabel("Successivo")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
-
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: geo.size.width * progress)
-            }
-            .frame(height: 3)
-        }
-        .background(Color.black.opacity(0.88))
-        .environment(\.colorScheme, .dark)
     }
     #endif
 

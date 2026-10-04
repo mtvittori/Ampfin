@@ -699,7 +699,7 @@ class JellyfinViewModel: ObservableObject {
         return apiService?.streamURL(for: itemId)
     }
 
-    // MARK: - Artist images (Zune-style backgrounds)
+    // MARK: - Artist images
 
     /// Photos to try for an artist, best first: the wide backdrop, then the portrait.
     /// When the tags are unknown (library cache from an older build) both are tried

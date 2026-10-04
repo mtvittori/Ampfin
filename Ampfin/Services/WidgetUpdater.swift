@@ -109,7 +109,7 @@ final class WidgetUpdater {
             return readBack ? (try? Data(contentsOf: file)).flatMap(PlatformImage.init(data:)) : nil
         }
         guard let url = vm.artworkURL(for: id, size: 300),
-              let image = await ZuneImageLoader.shared.firstImage(from: [url]) else { return nil }
+              let image = await ImageLoader.shared.firstImage(from: [url]) else { return nil }
         let data = await Task.detached(priority: .utility) { Self.jpeg(image) }.value
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if let data { try? data.write(to: file, options: .atomic) }

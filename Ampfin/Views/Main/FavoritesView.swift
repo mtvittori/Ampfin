@@ -1,21 +1,12 @@
 import SwiftUI
 
 struct FavoritesView: View {
-    @ObservedObject private var colorManager = AccentColorManager.shared
     @EnvironmentObject var viewModel: JellyfinViewModel
-
-    var body: some View {
-        if colorManager.zuneStyleEnabled {
-            ZuneFavoritesView()
-        } else {
-            classicBody
-        }
-    }
 
     /// Apple Music-style: Play / Shuffle on the favorite songs, the favorite albums as a
     /// strip of covers, then the songs with their covers; swipes and long press queue them.
     @ViewBuilder
-    private var classicBody: some View {
+    var body: some View {
         let tracks = viewModel.favoriteTracks
         let albums = viewModel.favoriteAlbums
 

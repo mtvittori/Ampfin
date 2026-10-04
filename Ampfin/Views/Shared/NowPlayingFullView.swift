@@ -71,25 +71,16 @@ struct NowPlayingFullView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Background: the artist photo panning (Zune), or the blurred artwork
-                if colorManager.zuneStyleEnabled {
-                    ZuneBackdrop(urls: viewModel.artistImageURLs(for: item), dim: 0.4)
-                } else {
-                    // Same as the album pages: one color taken from the cover's bottom edge,
-                    // a little deeper towards the bottom.
-                    ZStack {
-                        palette.background
-                        LinearGradient(colors: [.clear, .black.opacity(palette.isLight ? 0.08 : 0.25)],
-                                       startPoint: .center, endPoint: .bottom)
-                    }
-                    .animation(.easeInOut(duration: 0.6), value: palette)
+                // One color taken from the cover's bottom edge (as on the album pages),
+                // a little deeper towards the bottom.
+                ZStack {
+                    palette.background
+                    LinearGradient(colors: [.clear, .black.opacity(palette.isLight ? 0.08 : 0.25)],
+                                   startPoint: .center, endPoint: .bottom)
                 }
+                .animation(.easeInOut(duration: 0.6), value: palette)
 
-                if colorManager.zuneStyleEnabled {
-                    zuneLayout(geo)
-                } else {
-                    appleMusicLayout(geo)
-                }
+                appleMusicLayout(geo)
             }
             .offset(y: dragOffset)
             .gesture(
@@ -125,7 +116,7 @@ struct NowPlayingFullView: View {
         }
         .task(id: item.AlbumId ?? item.id) {
             guard let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200),
-                  let image = await ZuneImageLoader.shared.firstImage(from: [url]),
+                  let image = await ImageLoader.shared.firstImage(from: [url]),
                   let colors = HeroPalette(image: image) else { return }
             palette = colors
         }
@@ -423,102 +414,6 @@ struct NowPlayingFullView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(active ? .isSelected : [])
-    }
-
-    // MARK: - Zune layout
-
-    private func zuneLayout(_ geo: GeometryProxy) -> some View {
-        VStack(spacing: 0) {
-            // Drag indicator — positioned well below Dynamic Island / status bar
-            Capsule()
-                .fill(.white.opacity(0.4))
-                .frame(width: 36, height: 5)
-                .padding(.top, max(geo.safeAreaInsets.top, 59) + 16)
-
-            Spacer()
-
-            zuneHeader
-
-            Spacer().frame(height: 28)
-
-            seekSection
-                .padding(.horizontal, 32)
-
-            Spacer().frame(height: 26)
-
-            transportCapsule
-                .padding(.horizontal, 24)
-
-            if isVolumeSliderEnabled {
-                Spacer().frame(height: 28)
-
-                HStack(spacing: 10) {
-                    Image(systemName: "speaker.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.5))
-                    volumeSlider
-                        .tint(.white.opacity(0.6))
-                    Image(systemName: "speaker.wave.3.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.5))
-                }
-                .padding(.horizontal, 32)
-            }
-
-            Spacer().frame(height: 16)
-
-            audioInfoRow
-                .padding(.horizontal, 24)
-
-            Spacer(minLength: 0)
-                .frame(maxHeight: max(geo.safeAreaInsets.bottom, 34) + 16)
-        }
-    }
-
-    // MARK: - Zune header
-
-    /// Zune HD layout: the artist name huge and drifting across the photo, then a
-    /// small square cover beside the song and album in lowercase.
-    private var zuneHeader: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ZuneDriftingText(text: viewModel.artistName(for: item) ?? "", size: 112)
-
-            HStack(alignment: .bottom, spacing: 14) {
-                CachedAsyncImage(url: artworkURL,
-                    content: { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    },
-                    placeholder: {
-                        Rectangle().fill(.white.opacity(0.12))
-                    }
-                )
-                .id(artworkURL)
-                .frame(width: 92, height: 92)
-                .clipped()
-                .playerArtwork(in: artworkNamespace)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    if item.isLossless {
-                        losslessBadge
-                            .padding(.bottom, 4)
-                    }
-                    Text(item.Name.lowercased())
-                        .font(.zune(28, .semilight, relativeTo: .title2))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.7)
-                    if let album = item.Album {
-                        Text(album.lowercased())
-                            .font(.zune(17, .regular, relativeTo: .subheadline))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 28)
-        }
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Track info
@@ -862,35 +757,6 @@ enum AudioInfoFormat {
 private extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)
-    }
-}
-
-// MARK: - Drifting name
-
-/// Artist name wider than the screen, sliding slowly back and forth so the whole
-/// name passes by, like the Zune HD now playing screen.
-private struct ZuneDriftingText: View {
-    let text: String
-    let size: CGFloat
-
-    @State private var textWidth: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geo in
-            let travel = max(textWidth - geo.size.width + 56, 0)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                Text(text.lowercased())
-                    .font(.zune(size, .light, relativeTo: .largeTitle))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
-                    .offset(x: 28 - travel * (0.5 - 0.5 * cos(t / 9)))
-            }
-        }
-        .frame(height: size * 1.15)
-        .accessibilityLabel(text)
     }
 }
 

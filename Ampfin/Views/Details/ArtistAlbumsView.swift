@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ArtistAlbumsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var colorManager = AccentColorManager.shared
     let artist: ArtistItem
 
     private var filteredAlbums: [AlbumItem] {
@@ -11,13 +10,7 @@ struct ArtistAlbumsView: View {
     }
 
     var body: some View {
-        Group {
-            if colorManager.zuneStyleEnabled {
-                zunePage
-            } else {
-                classicGrid
-            }
-        }
+        page
         .sheet(item: $infoTrack) { track in
             ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)
                 .environmentObject(viewModel)
@@ -29,7 +22,7 @@ struct ArtistAlbumsView: View {
 
     /// Apple Music-style page: the artist's photo edge to edge, fading into its color;
     /// top songs, then the albums as a strip of covers.
-    private var classicGrid: some View {
+    private var page: some View {
         let tracks = viewModel.tracks(byArtist: artist)
         let trackIds = Set(tracks.map(\.Id))
         let isCurrent = viewModel.currentlyPlayingItem.map { trackIds.contains($0.Id) } ?? false
@@ -140,74 +133,5 @@ struct ArtistAlbumsView: View {
         if albums > 0 { parts.append(albums == 1 ? "1 album" : "\(albums) album") }
         if tracks > 0 { parts.append(tracks == 1 ? "1 brano" : "\(tracks) brani") }
         return parts.joined(separator: " · ")
-    }
-
-    // MARK: - Zune
-
-    /// The photo fills the screen and pans; the name sits low and runs off the edge,
-    /// with albums and songs scrolling up over the photo.
-    private var zunePage: some View {
-        let tracks = viewModel.tracks(byArtist: artist)
-
-        return GeometryReader { geo in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Color.clear.frame(height: geo.size.height * 0.34)
-
-                    ZuneOverflowText(text: artist.Name, size: 84)
-                        .padding(.leading, 16)
-
-                    if let genres = artist.Genres, !genres.isEmpty {
-                        Text(genres.prefix(3).joined(separator: " · ").lowercased())
-                            .font(.zune(17, .semilight, relativeTo: .subheadline))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.horizontal, 20)
-                    }
-
-                    if !tracks.isEmpty {
-                        HStack(spacing: 28) {
-                            ZuneCircleButton(title: "riproduci", systemImage: "play.fill") {
-                                viewModel.playerManager.play(item: tracks[0], in: tracks)
-                            }
-                            ZuneCircleButton(title: "casuale", systemImage: "shuffle") {
-                                viewModel.playerManager.playAlbumShuffled(tracks: tracks)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 20)
-                    }
-
-                    if !filteredAlbums.isEmpty {
-                        ZuneSectionTitle(text: "album")
-                            .padding(.horizontal, 20)
-                        ZuneStrip {
-                            ForEach(filteredAlbums) { album in
-                                ZuneAlbumTile(album: album, showsArtist: false)
-                            }
-                        }
-                    }
-
-                    if !tracks.isEmpty {
-                        ZuneSectionTitle(text: "brani")
-                            .padding(.horizontal, 20)
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(tracks) { track in
-                                ZuneTrackRow(track: track, queue: tracks, detail: .album)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                    }
-                }
-                .padding(.bottom, 140)
-            }
-            #if os(iOS)
-            .hidesMiniPlayerOnScroll()
-            #endif
-        }
-        .background {
-            ZuneBackdrop(urls: viewModel.artistImageURLs(for: artist), dim: 0.35)
-                .ignoresSafeArea()
-        }
-        .zuneChrome()
     }
 }

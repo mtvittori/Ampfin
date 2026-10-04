@@ -10,9 +10,6 @@ struct SearchResultsView: View {
     }
 
     @State private var filter: ResultFilter = .all
-    @ObservedObject private var colorManager = AccentColorManager.shared
-    @Environment(\.zunePivotHeaderHeight) private var pivotHeader
-    @FocusState private var searchFocused: Bool
 
     private var currentFilterHasResults: Bool {
         switch filter {
@@ -63,150 +60,13 @@ struct SearchResultsView: View {
     }
 
     var body: some View {
-        Group {
-            if colorManager.zuneStyleEnabled {
-                zuneBody
-            } else {
-                classicBody
-            }
-        }
+        content
         .task(id: "\(query)|\(viewModel.audioItems.count)|\(viewModel.artists.count)") {
             await search()
         }
     }
 
-    // MARK: - Zune
-
-    private var zuneBackdropURLs: [URL] {
-        if let artist = filteredArtists.first { return viewModel.artistImageURLs(for: artist) }
-        if let album = filteredAlbums.first { return viewModel.artistImageURLs(for: album) }
-        if let track = filteredTracks.first ?? viewModel.currentlyPlayingItem { return viewModel.artistImageURLs(for: track) }
-        return []
-    }
-
-    private var zuneBody: some View {
-        ZuneScreen(title: "cerca", backdropURLs: zuneBackdropURLs) {
-            // No search tab in the pivot, so the page carries its own field.
-            if pivotHeader > 0 {
-                zuneSearchField
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 14)
-            }
-            if query.isEmpty {
-                ZuneNote(text: "cerca brani, album o artisti")
-                    .padding(.horizontal, 20)
-            } else if filteredTracks.isEmpty && filteredAlbums.isEmpty && filteredArtists.isEmpty {
-                ZuneNote(text: "nessun risultato per \u{201C}\(query)\u{201D}")
-                    .padding(.horizontal, 20)
-            } else {
-                zunePivot
-                    .padding(.bottom, 4)
-
-                let artists = Array(filteredArtists.prefix(filter == .artists ? 30 : 5))
-                if (filter == .all || filter == .artists) && !artists.isEmpty {
-                    ZuneSectionTitle(text: "artisti")
-                        .padding(.horizontal, 20)
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(artists) { artist in
-                            NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
-                                Text(artist.Name.lowercased())
-                                    .font(.zune(28, .light, relativeTo: .title2))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 6)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-
-                let albums = Array(filteredAlbums.prefix(filter == .albums ? 40 : 10))
-                if (filter == .all || filter == .albums) && !albums.isEmpty {
-                    ZuneSectionTitle(text: "album")
-                        .padding(.horizontal, 20)
-                    ZuneStrip {
-                        ForEach(albums) { album in
-                            ZuneAlbumTile(album: album, size: 140)
-                        }
-                    }
-                }
-
-                let tracks = Array(filteredTracks.prefix(filter == .tracks ? 60 : 15))
-                if (filter == .all || filter == .tracks) && !tracks.isEmpty {
-                    ZuneSectionTitle(text: "brani")
-                        .padding(.horizontal, 20)
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(tracks) { track in
-                            ZuneTrackRow(track: track, queue: tracks, leading: .artwork)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
-
-                if !currentFilterHasResults {
-                    ZuneNote(text: "nessun risultato in \u{201C}\(filter.rawValue)\u{201D}")
-                        .padding(.horizontal, 20)
-                }
-            }
-        }
-    }
-
-    private var zuneSearchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.white.opacity(0.7))
-            TextField("", text: $query, prompt: Text("brani, album, artisti").foregroundStyle(.white.opacity(0.45)))
-                .font(.zune(22, .semilight, relativeTo: .title3))
-                .foregroundStyle(.white)
-                .focused($searchFocused)
-                .submitLabel(.search)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Cancella")
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.white.opacity(0.14))
-        .overlay(Rectangle().stroke(.white.opacity(searchFocused ? 0.9 : 0.3), lineWidth: 2))
-    }
-
-    /// Zune pivot: lowercase words in a row, the chosen one bright, the others dim.
-    private var zunePivot: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 22) {
-                ForEach(ResultFilter.allCases) { option in
-                    Button {
-                        withAnimation(.easeOut(duration: 0.2)) { filter = option }
-                    } label: {
-                        Text(option.rawValue.lowercased())
-                            .font(.zune(30, .light, relativeTo: .title2))
-                            .foregroundStyle(.white.opacity(filter == option ? 1 : 0.4))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(filter == option ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, 20)
-        }
-    }
-
-    // MARK: - Classic
-
-    private var classicBody: some View {
+    private var content: some View {
         Group {
             if query.isEmpty {
                 ContentUnavailableView("Cerca", systemImage: "magnifyingglass", description: Text("Cerca brani, album o artisti"))

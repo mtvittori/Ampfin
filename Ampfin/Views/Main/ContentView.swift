@@ -15,7 +15,6 @@ extension EnvironmentValues {
 struct ContentView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject private var colorManager = AccentColorManager.shared
-    @AppStorage(HomeStyle.storageKey) private var homeStyle = HomeStyle.classic.rawValue
 
     // Sidebar / Tab selection
     enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
@@ -96,7 +95,7 @@ struct ContentView: View {
     private func updateArtworkAccent() async {
         guard let item = viewModel.currentlyPlayingItem,
               let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 300),
-              let image = await ZuneImageLoader.shared.firstImage(from: [url]),
+              let image = await ImageLoader.shared.firstImage(from: [url]),
               let color = image.averageColor() else { return }
         // No animation: an animated tint redraws the whole app on every frame, and it
         // ran exactly while the album page morphed its buttons, making them stutter.
@@ -208,77 +207,70 @@ struct ContentView: View {
     private var iOSContent: some View {
         ZStack {
             // Main tab content
-            // Zune: Windows Phone pivot instead of the tab bar.
-            Group {
-                if colorManager.zuneStyleEnabled {
-                    ZunePivotView(selection: $selectedTab)
-                } else {
-                    TabView(selection: $selectedTab) {
-                        Tab(SidebarItem.home.title, systemImage: SidebarItem.home.systemImage, value: .home) {
-                            // Zoom transitions from covers to their pages.
-                            ZoomScope {
-                                NavigationStack {
-                                    HomeView()
-                                        .iOSToolbar(viewModel: viewModel,
-                                                    title: homeStyle == HomeStyle.appleMusic.rawValue ? "Home" : nil,
-                                                    subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
-                                }
-                            }
-                        }
-
-                        Tab(SidebarItem.tracks.title, systemImage: SidebarItem.tracks.systemImage, value: .tracks) {
-                            // Zoom transitions from covers to their pages.
-                            ZoomScope {
-                                NavigationStack {
-                                    TracksView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Brani",
-                                                    subtitle: countLabel(viewModel.audioItems.count, one: "brano", many: "brani"))
-                                }
-                            }
-                        }
-
-                        Tab(SidebarItem.albums.title, systemImage: SidebarItem.albums.systemImage, value: .albums) {
-                            // Zoom transitions from covers to their pages.
-                            ZoomScope {
-                                NavigationStack {
-                                    AlbumsView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Album",
-                                                    subtitle: countLabel(viewModel.albums.count, one: "album", many: "album"))
-                                }
-                            }
-                        }
-
-                        Tab(SidebarItem.artists.title, systemImage: SidebarItem.artists.systemImage, value: .artists) {
-                            // Zoom transitions from covers to their pages.
-                            ZoomScope {
-                                NavigationStack {
-                                    ArtistsView()
-                                        .iOSToolbar(viewModel: viewModel, title: "Artisti",
-                                                    subtitle: countLabel(viewModel.artists.count, one: "artista", many: "artisti"))
-                                }
-                            }
-                        }
-
-                        // Titled in Italian like the other tabs (untitled, iOS writes "Search").
-                        Tab("Cerca", systemImage: "magnifyingglass", value: .search, role: .search) {
-                            // Zoom transitions from covers to their pages.
-                            ZoomScope {
-                                NavigationStack {
-                                    SearchResultsView(query: $viewModel.globalSearchQuery)
-                                        .environmentObject(viewModel)
-                                        .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
-                                }
-                            }
+            TabView(selection: $selectedTab) {
+                Tab(SidebarItem.home.title, systemImage: SidebarItem.home.systemImage, value: .home) {
+                    // Zoom transitions from covers to their pages.
+                    ZoomScope {
+                        NavigationStack {
+                            AppleHomeView()
+                                .iOSToolbar(viewModel: viewModel,
+                                            title: "Home",
+                                            subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
                         }
                     }
-                    // Classic: the mini player is iOS 26's own accessory above the tabs,
-                    // which shrinks next to them while scrolling down, as in Apple Music.
-                    .tabBarMinimizeBehavior(.onScrollDown)
-                    .nowPlayingAccessory(isEnabled: viewModel.currentlyPlayingItem != nil) {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
-                            showFullPlayer = true
+                }
+
+                Tab(SidebarItem.tracks.title, systemImage: SidebarItem.tracks.systemImage, value: .tracks) {
+                    // Zoom transitions from covers to their pages.
+                    ZoomScope {
+                        NavigationStack {
+                            TracksView()
+                                .iOSToolbar(viewModel: viewModel, title: "Brani",
+                                            subtitle: countLabel(viewModel.audioItems.count, one: "brano", many: "brani"))
                         }
                     }
+                }
+
+                Tab(SidebarItem.albums.title, systemImage: SidebarItem.albums.systemImage, value: .albums) {
+                    // Zoom transitions from covers to their pages.
+                    ZoomScope {
+                        NavigationStack {
+                            AlbumsView()
+                                .iOSToolbar(viewModel: viewModel, title: "Album",
+                                            subtitle: countLabel(viewModel.albums.count, one: "album", many: "album"))
+                        }
+                    }
+                }
+
+                Tab(SidebarItem.artists.title, systemImage: SidebarItem.artists.systemImage, value: .artists) {
+                    // Zoom transitions from covers to their pages.
+                    ZoomScope {
+                        NavigationStack {
+                            ArtistsView()
+                                .iOSToolbar(viewModel: viewModel, title: "Artisti",
+                                            subtitle: countLabel(viewModel.artists.count, one: "artista", many: "artisti"))
+                        }
+                    }
+                }
+
+                // Titled in Italian like the other tabs (untitled, iOS writes "Search").
+                Tab("Cerca", systemImage: "magnifyingglass", value: .search, role: .search) {
+                    // Zoom transitions from covers to their pages.
+                    ZoomScope {
+                        NavigationStack {
+                            SearchResultsView(query: $viewModel.globalSearchQuery)
+                                .environmentObject(viewModel)
+                                .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
+                        }
+                    }
+                }
+            }
+            // The mini player is iOS 26's own accessory above the tabs,
+            // which shrinks next to them while scrolling down, as in Apple Music.
+            .tabBarMinimizeBehavior(.onScrollDown)
+            .nowPlayingAccessory(isEnabled: viewModel.currentlyPlayingItem != nil) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                    showFullPlayer = true
                 }
             }
             .environment(\.miniPlayerVisible, $miniPlayerVisible)
@@ -286,38 +278,7 @@ struct ContentView: View {
             // Player layer
             if let playingItem = viewModel.currentlyPlayingItem {
                 ZStack {
-                    // The floating mini bar is only for the Zune pivot, which has no tab bar.
-                    if !showFullPlayer {
-                      if colorManager.zuneStyleEnabled {
-                        // Mini player bar
-                        VStack(spacing: 0) {
-                            Spacer()
-                            ClockReader(clock: viewModel.clock) { time in MusicPlayerView(
-                                item: playingItem,
-                                isPlaying: viewModel.isPlaying,
-                                currentTime: time,
-                                duration: playingItem.duration ?? 0,
-                                artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 100),
-                                onPlayPause: { viewModel.playerManager.togglePlayPause() },
-                                onBackward: { viewModel.playerManager.backward() },
-                                onForward: { viewModel.playerManager.forward() },
-                                onSeek: { time in viewModel.playerManager.seek(to: time) },
-                                artworkNamespace: playerArtwork
-                            ) }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
-                                    showFullPlayer = true
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            // No tab bar under the pivot.
-                            .padding(.bottom, colorManager.zuneStyleEnabled ? 4 : 56)
-                        }
-                        .offset(y: miniPlayerVisible ? 0 : 200)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                      }
-                    } else {
+                    if showFullPlayer {
                         // Full player — its own Liquid Glass elements materialize in place
                         // (no shape-morph from the mini bar; see NowPlayingFullView doc comment).
                         ClockReader(clock: viewModel.clock) { time in NowPlayingFullView(
@@ -333,11 +294,11 @@ struct ContentView: View {
                             isExpanded: $showFullPlayer,
                             artworkNamespace: playerArtwork
                         ) }
-                        // Classic slides as one sheet; materializing its glass pieces on top
-                        // of the slide flickered at the end. Zune keeps the materialize fade.
-                        .glassEffectTransition(colorManager.zuneStyleEnabled ? .materialize : .identity)
-                        // Classic rises from the accessory like a sheet; Zune fades in.
-                        .transition(colorManager.zuneStyleEnabled ? .opacity : .move(edge: .bottom))
+                        // Slides as one sheet; materializing its glass pieces on top
+                        // of the slide flickered at the end.
+                        .glassEffectTransition(.identity)
+                        // Rises from the accessory like a sheet.
+                        .transition(.move(edge: .bottom))
                         // Stays above the tabs while it slides out, instead of dropping behind
                         // them for the last frames of the removal.
                         .zIndex(1)
@@ -349,8 +310,6 @@ struct ContentView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: miniPlayerVisible)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
         .task { await loadLibraryIfNeeded() }
-        // Zune was a dark-first design: the photos and white type need it.
-        .preferredColorScheme(colorManager.zuneStyleEnabled ? .dark : nil)
         #if DEBUG
         .task { await applyTestLaunchArguments() }
         #endif
@@ -390,7 +349,7 @@ struct ContentView: View {
     private func detailView(for item: SidebarItem?) -> some View {
         switch item {
         case .home, .none:
-            HomeView()
+            AppleHomeView()
         case .tracks:
             TracksView()
         case .albums:
@@ -470,7 +429,7 @@ private struct IOSToolbarModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if !colorManager.zuneStyleEnabled && topBarStyle == TopBarStyle.ampfin.rawValue {
+        if topBarStyle == TopBarStyle.ampfin.rawValue {
             // Our own bar instead of the system one, so the buttons can be as big as we like.
             // Only on the tab's root: the pages it opens keep the system bar and Back.
             content
@@ -487,12 +446,11 @@ private struct IOSToolbarModifier: ViewModifier {
     /// The system navigation bar: inline large title, subtitle, accent capsule.
     private func systemBar(_ content: Content) -> some View {
         content
-            // Zune screens draw their own giant title.
-            .navigationTitle(colorManager.zuneStyleEnabled ? "" : (title ?? "amplifin"))
+            .navigationTitle(title ?? "amplifin")
             // Large bold title on the same row as the buttons, as in Photos on iOS 26.
             .toolbarTitleDisplayMode(.inlineLarge)
             // A second line under the title makes the bar taller, so the buttons aren't squeezed.
-            .modifier(OptionalSubtitle(text: colorManager.zuneStyleEnabled ? nil : subtitle))
+            .modifier(OptionalSubtitle(text: subtitle))
             // One capsule of glass tinted with the accent (the playing album's color when
             // that option is on), at the size of iOS 26's toolbar groups. Logout lives in Settings.
             .toolbar {

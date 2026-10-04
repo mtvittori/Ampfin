@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct TracksView: View {
-    @ObservedObject private var colorManager = AccentColorManager.shared
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject private var downloadManager = DownloadManager.shared
     @State private var searchText = ""
@@ -26,14 +25,6 @@ struct TracksView: View {
     }
     
     var body: some View {
-        if colorManager.zuneStyleEnabled {
-            ZuneTracksView(tracks: filteredTracks)
-        } else {
-            classicBody
-        }
-    }
-
-    private var classicBody: some View {
         VStack(spacing: 0) {
             List {
                 // Play everything or shuffle, as at the top of an album.

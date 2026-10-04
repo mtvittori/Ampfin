@@ -10,7 +10,6 @@ struct SettingsView: View {
     @State private var libraryCacheSize: Int64 = 0
     @State private var songCacheSize: Int64 = 0
     @ObservedObject private var backup = SettingsBackup.shared
-    @AppStorage(HomeStyle.storageKey) private var homeStyle = HomeStyle.classic.rawValue
     @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
@@ -113,33 +112,24 @@ struct SettingsView: View {
 
             // MARK: - Home
             Section {
-                Picker("Home", selection: $homeStyle) {
-                    ForEach(HomeStyle.allCases) { style in
-                        Text(style.label).tag(style.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-
                 Picker("Barra in alto", selection: $topBarStyle) {
                     ForEach(TopBarStyle.allCases) { style in
                         Text(style.label).tag(style.rawValue)
                     }
                 }
             } header: {
-                Text("Home e barra")
+                Text("Barra in alto")
             } footer: {
-                Text("Apple Music: card grandi scelte per te e file di copertine, come l'app Musica. Barra Ampfin: titolo grande e pulsanti più grandi in una barra propria, al posto di quella di sistema. Con lo stile Zune restano quelle Zune.")
+                Text("Barra Ampfin: titolo grande e pulsanti più grandi in una barra propria, al posto di quella di sistema.")
             }
 
             // MARK: - Now Playing Background
             Section {
-                Toggle("Stile Zune", isOn: $colorManager.zuneStyleEnabled)
                 Toggle("Sfondo sfocato", isOn: $colorManager.nowPlayingBlurredBackground)
-                    .disabled(colorManager.zuneStyleEnabled)
             } header: {
                 Text("Schermata Play")
             } footer: {
-                Text("Stile Zune: nella riproduzione e negli artisti lo sfondo è la foto dell'artista, che scorre lenta dietro scritte giganti. Senza, lo sfondo è la copertina, sfocata o nitida.")
+                Text("Lo sfondo della copertina nella schermata Play, sfocata o nitida.")
             }
 
             // MARK: - Audio output

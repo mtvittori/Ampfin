@@ -10,16 +10,9 @@ struct AlbumTracksListView: View {
     @State private var showCoverPicker = false
     /// Rows cascade in only while the page opens, not when scrolled back into view.
     @State private var introRunning = true
-    @ObservedObject private var colorManager = AccentColorManager.shared
 
     var body: some View {
-        Group {
-            if colorManager.zuneStyleEnabled {
-                zuneBody
-            } else {
-                classicBody
-            }
-        }
+        content
         .task {
             await viewModel.fetchAlbumTracks(albumId: album.id)
         }
@@ -37,143 +30,8 @@ struct AlbumTracksListView: View {
         }
     }
 
-    // MARK: - Zune
-
-    /// The album artist's photo behind a small square cover, the album name huge
-    /// and running off the edge, then the numbered songs.
-    private var zuneBody: some View {
-        let tracks = viewModel.selectedAlbumTracks
-        let artist = viewModel.artist(named: album.AlbumArtist)
-        let totalTime = tracks.compactMap(\.duration).reduce(0, +)
-
-        return GeometryReader { geo in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Color.clear.frame(height: geo.size.height * 0.22)
-
-                    CachedAsyncImage(url: viewModel.artworkURL(for: album.id, size: 400), targetSize: 150,
-                        content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                        placeholder: { Rectangle().fill(.white.opacity(0.12)) }
-                    )
-                    .frame(width: 150, height: 150)
-                    .clipped()
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 10)
-
-                    ZuneOverflowText(text: album.Name, size: 64)
-                        .padding(.leading, 16)
-
-                    if let artist {
-                        NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
-                            artistLine
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        artistLine
-                    }
-
-                    Text(albumFacts(trackCount: tracks.count, totalTime: totalTime))
-                        .font(.zune(15, .regular, relativeTo: .caption))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .padding(.horizontal, 20)
-                        .padding(.top, 4)
-
-                    zuneActions(tracks)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 22)
-
-                    ZuneSectionTitle(text: "brani")
-                        .padding(.horizontal, 20)
-
-                    if viewModel.isLoadingAlbum {
-                        ProgressView()
-                            .tint(.white)
-                            .padding(.horizontal, 20)
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                                ZuneTrackRow(track: track, queue: tracks, leading: .number(index + 1),
-                                             detail: .artist,
-                                             onInfo: { selectedTrackForInfo = $0 })
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                    }
-                }
-                .padding(.bottom, 140)
-            }
-            #if os(iOS)
-            .hidesMiniPlayerOnScroll()
-            #endif
-        }
-        .background {
-            ZuneBackdrop(urls: viewModel.artistImageURLs(for: album), dim: 0.45)
-                .ignoresSafeArea()
-        }
-        .zuneChrome()
-    }
-
-    private var artistLine: some View {
-        Text((album.AlbumArtist ?? "artista sconosciuto").lowercased())
-            .font(.zune(22, .regular, relativeTo: .title3))
-            .foregroundStyle(Color.accentColor)
-            .lineLimit(1)
-            .padding(.horizontal, 20)
-    }
-
-    private func albumFacts(trackCount: Int, totalTime: TimeInterval) -> String {
-        var parts: [String] = []
-        if let year = album.ProductionYear { parts.append(String(year)) }
-        if trackCount > 0 { parts.append(trackCount == 1 ? "1 brano" : "\(trackCount) brani") }
-        if totalTime > 0 { parts.append("\(Int((totalTime / 60).rounded())) min") }
-        return parts.joined(separator: " · ")
-    }
-
-    private func zuneActions(_ tracks: [AudioItem]) -> some View {
-        let allDownloaded = !tracks.isEmpty && tracks.allSatisfy { downloadManager.isDownloaded($0.Id) }
-
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 22) {
-                ZuneCircleButton(title: "riproduci", systemImage: "play.fill") {
-                    if let first = tracks.first {
-                        viewModel.playerManager.play(item: first, in: tracks)
-                    }
-                }
-                ZuneCircleButton(title: "casuale", systemImage: "shuffle") {
-                    viewModel.playerManager.playAlbumShuffled(tracks: tracks)
-                }
-                ZuneCircleButton(systemImage: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart") {
-                    viewModel.toggleFavoriteAlbum(album.id)
-                }
-                .accessibilityLabel(viewModel.isAlbumFavorite(album.id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti")
-                ZuneCircleButton(systemImage: viewModel.repeatMode.iconName,
-                                 tint: viewModel.repeatMode == .off ? .white : .accentColor) {
-                    viewModel.toggleRepeatMode()
-                }
-                .accessibilityLabel("Ripeti")
-                ZuneCircleButton(systemImage: allDownloaded ? "arrow.down.circle.fill" : "arrow.down") {
-                    if allDownloaded {
-                        for track in tracks { viewModel.removeDownload(for: track.Id) }
-                    } else {
-                        for track in tracks where !downloadManager.isDownloaded(track.Id) {
-                            viewModel.downloadTrack(track)
-                        }
-                    }
-                }
-                .accessibilityLabel(allDownloaded ? "Rimuovi download" : "Scarica album")
-                ZuneCircleButton(systemImage: "photo") {
-                    showCoverPicker = true
-                }
-                .accessibilityLabel("Cambia copertina")
-            }
-        }
-        .scrollClipDisabled()
-    }
-
-    // MARK: - Classic
-
     /// Apple Music-style page: the cover edge to edge, fading into its own color.
-    private var classicBody: some View {
+    private var content: some View {
         let tracks = viewModel.selectedAlbumTracks
         let artist = viewModel.artist(named: album.AlbumArtist)
 
@@ -182,7 +40,7 @@ struct AlbumTracksListView: View {
             title: album.Name,
             subtitle: album.AlbumArtist,
             subtitleDestination: artist.map { AnyView(ArtistAlbumsView(artist: $0)) },
-            details: classicDetails(tracks)
+            details: albumDetails(tracks)
         ) { palette in
             HeroPlayControls(
                 palette: palette,
@@ -216,7 +74,7 @@ struct AlbumTracksListView: View {
                 }
                 .padding(.horizontal, 20)
 
-                Text(classicFooter(tracks))
+                Text(albumFooter(tracks))
                     .font(.footnote)
                     .foregroundStyle(palette.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -241,7 +99,7 @@ struct AlbumTracksListView: View {
     }
 
     /// "Pop · 2014 · Lossless", like the line under the title in Apple Music.
-    private func classicDetails(_ tracks: [AudioItem]) -> String {
+    private func albumDetails(_ tracks: [AudioItem]) -> String {
         var parts: [String] = []
         if let genre = album.Genres?.first { parts.append(genre) }
         if let year = album.ProductionYear { parts.append(String(year)) }
@@ -249,7 +107,7 @@ struct AlbumTracksListView: View {
         return parts.joined(separator: " · ")
     }
 
-    private func classicFooter(_ tracks: [AudioItem]) -> String {
+    private func albumFooter(_ tracks: [AudioItem]) -> String {
         let minutes = Int((tracks.compactMap(\.duration).reduce(0, +) / 60).rounded())
         let count = tracks.count == 1 ? "1 brano" : "\(tracks.count) brani"
         return minutes > 0 ? "\(count), \(minutes) minuti" : count

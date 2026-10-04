@@ -17,7 +17,7 @@ final class SettingsBackup: ObservableObject {
     static let keys: [String] = [
         "accentColor_red", "accentColor_green", "accentColor_blue", "accentColor_hasCustom",
         "accentFollowsArtwork", "glassTintEnabled", "glassTintIntensity",
-        "nowPlayingBlurredBackground", "zuneStyleEnabled", "homeStyle", "topBarStyle",
+        "nowPlayingBlurredBackground", "topBarStyle",
         "jellyfin_favorite_albums", "jellyfin_favorite_tracks", "jellyfin_favorite_playlists",
         "stream_quality_wifi", "stream_quality_cellular", "library_refresh_interval",
         "eq_enabled", "eq_preset", "eq_bandGains",

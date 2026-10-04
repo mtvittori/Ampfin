@@ -1,24 +1,9 @@
 // AppleHomeView.swift
-// The Home in the style of Apple Music on iOS 26 (Settings → Home → Apple Music):
+// The Home in the style of Apple Music on iOS 26:
 // tall "top picks" cards whose bottom takes the cover's color, then strips of square
 // covers with the title underneath.
 
 import SwiftUI
-
-/// Which Home the classic look shows.
-enum HomeStyle: String, CaseIterable, Identifiable {
-    case classic, appleMusic
-
-    static let storageKey = "homeStyle"
-
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .classic: return "Classica"
-        case .appleMusic: return "Apple Music"
-        }
-    }
-}
 
 /// Which top bar the tabs use (Settings → Barra in alto).
 enum TopBarStyle: String, CaseIterable, Identifiable {
@@ -236,7 +221,7 @@ private struct PickCard: View {
         .animation(.easeInOut(duration: 0.4), value: palette)
         .task(id: album.Id) {
             guard let url = viewModel.artworkURL(for: album.id, size: 600),
-                  let loaded = await ZuneImageLoader.shared.firstImage(from: [url]) else { return }
+                  let loaded = await ImageLoader.shared.firstImage(from: [url]) else { return }
             image = loaded
             if let colors = HeroPalette(image: loaded) { palette = colors }
         }
