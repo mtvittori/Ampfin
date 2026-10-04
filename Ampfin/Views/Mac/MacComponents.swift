@@ -288,8 +288,8 @@ struct MacAlbumCard: View {
     }
 }
 
-/// Grid used for albums everywhere: Music's roomy covers, 24 pt between them.
-let macAlbumColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 24, alignment: .top)]
+/// Grid used for albums everywhere: Music's covers, about 170 pt wide with 20 pt between them.
+let macAlbumColumns = [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 20, alignment: .top)]
 
 /// The big title at the top of a library section, with a smaller line under it
 /// ("908 album"). The window toolbar shows no title, as in Music.

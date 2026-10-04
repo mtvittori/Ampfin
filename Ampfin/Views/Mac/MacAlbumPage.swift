@@ -29,12 +29,22 @@ struct MacAlbumPage: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                header
+        // Two panes, as Music's album view: the cover and the facts stay on the left while
+        // the songs scroll on the right.
+        HStack(alignment: .top, spacing: 0) {
+            infoPane
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+                .padding(.bottom, 28)
+                .frame(width: 380, alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .top)
+
+            Divider()
+
+            ScrollView {
                 if tracks.isEmpty {
                     if viewModel.isLoadingAlbum {
-                        ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                        ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
                     }
                 } else {
                     LazyVStack(spacing: 0) {
@@ -46,15 +56,10 @@ struct MacAlbumPage: View {
                                         onInfo: { infoTrack = $0 })
                         }
                     }
-                    Text(MacFormat.summary(tracks: tracks))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-            .padding(.bottom, 40)
         }
         .navigationTitle(album.Name)
         .task(id: album.id) {
@@ -79,61 +84,67 @@ struct MacAlbumPage: View {
         tracks.contains { ($0.mainArtistName ?? "") != (album.AlbumArtist ?? "") && $0.mainArtistName != nil }
     }
 
-    private var header: some View {
-        HStack(alignment: .bottom, spacing: 28) {
-            MacCover(itemId: album.id, size: 260, radius: 12, imageSize: 700)
+    private var infoPane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MacCover(itemId: album.id, radius: 12, imageSize: 800)
+                .padding(.bottom, 14)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(album.Name)
-                    .font(.system(size: 30, weight: .bold))
-                    .lineLimit(3)
-                if let name = album.AlbumArtist {
-                    if let artist {
-                        NavigationLink(value: artist) {
-                            Text(name).font(.title2).foregroundStyle(.tint)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Text(name).font(.title2).foregroundStyle(.tint)
+            Text(album.Name)
+                .font(.system(size: 24, weight: .bold))
+                .lineLimit(4)
+            if let name = album.AlbumArtist {
+                if let artist {
+                    NavigationLink(value: artist) {
+                        Text(name).font(.title3).foregroundStyle(.tint)
                     }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(name).font(.title3).foregroundStyle(.tint)
                 }
-                if !caption.isEmpty {
-                    Text(caption.uppercased())
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 10) {
-                    MacPlayButtons(tracks: tracks)
-
-                    Button {
-                        viewModel.toggleFavoriteAlbum(album.id)
-                    } label: {
-                        Image(systemName: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart")
-                            .foregroundStyle(viewModel.isAlbumFavorite(album.id) ? Color.pink : Color.primary)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .help("Preferito")
-
-                    Menu {
-                        QueueMenuItems(tracks: tracks).environmentObject(viewModel)
-                        Divider()
-                        Button { showCoverPicker = true } label: { Label("Cambia copertina…", systemImage: "photo") }
-                        Button { showAlbumInfo = true } label: { Label("Informazioni sull'album", systemImage: "info.circle") }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                }
-                .padding(.top, 10)
             }
-            Spacer(minLength: 0)
+            if !caption.isEmpty {
+                Text(caption.uppercased())
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                MacPlayButtons(tracks: tracks)
+
+                Button {
+                    viewModel.toggleFavoriteAlbum(album.id)
+                } label: {
+                    Image(systemName: viewModel.isAlbumFavorite(album.id) ? "heart.fill" : "heart")
+                        .foregroundStyle(viewModel.isAlbumFavorite(album.id) ? Color.pink : Color.primary)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .help("Preferito")
+
+                Menu {
+                    QueueMenuItems(tracks: tracks).environmentObject(viewModel)
+                    Divider()
+                    Button { showCoverPicker = true } label: { Label("Cambia copertina…", systemImage: "photo") }
+                    Button { showAlbumInfo = true } label: { Label("Informazioni sull'album", systemImage: "info.circle") }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+            .padding(.top, 8)
+
+            if !tracks.isEmpty {
+                Text(MacFormat.summary(tracks: tracks))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 10)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 #endif
