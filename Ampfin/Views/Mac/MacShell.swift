@@ -48,11 +48,14 @@ struct MacShell: View {
     @State private var selection: MacSection? = .home
     @State private var path = NavigationPath()
     @State private var playerState = MacPlayerState()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// What the sidebar and the side panel were before Now Playing took the window.
+    @State private var restoreLayout: (columns: NavigationSplitViewVisibility, panel: Bool)?
 
     private let library: [MacSection] = [.recent, .artists, .albums, .tracks, .genres, .favorites]
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
         } detail: {
@@ -67,17 +70,29 @@ struct MacShell: View {
             }
             // Choosing another section starts from its own page again.
             .id(selection ?? .home)
+            // Now Playing takes the whole window, as Music's full-screen player: the sidebar,
+            // the toolbar and the side panel step aside, so nothing of the window sits on it.
+            .overlay {
+                if playerState.showFullPlayer {
+                    MacFullPlayer(player: viewModel.playerManager)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .toolbarVisibility(playerState.showFullPlayer ? .hidden : .automatic, for: .windowToolbar)
         }
         .inspector(isPresented: $playerState.showPanel) {
             MacSidePanel(tab: $playerState.panelTab)
                 .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
         }
-        // Now Playing over the whole window, rising from the bar.
-        .overlay {
-            if playerState.showFullPlayer {
-                MacFullPlayer(player: viewModel.playerManager)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(1)
+        .onChange(of: playerState.showFullPlayer) { _, open in
+            if open {
+                restoreLayout = (columnVisibility, playerState.showPanel)
+                columnVisibility = .detailOnly
+                playerState.showPanel = false
+            } else if let restore = restoreLayout {
+                columnVisibility = restore.columns
+                playerState.showPanel = restore.panel
+                restoreLayout = nil
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.9), value: playerState.showFullPlayer)

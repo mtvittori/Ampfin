@@ -16,11 +16,12 @@ struct MacFullPlayer: View {
     var body: some View {
         if let item = player.currentlyPlayingItem {
             MacTintedPage(imageURLs: [viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 800)].compactMap { $0 }) { _ in
-                HStack(alignment: .center, spacing: 56) {
+                HStack(alignment: .center, spacing: 64) {
                     nowPlaying(item)
-                        .frame(maxWidth: 460)
+                        .frame(maxWidth: 560)
                     MacSidePanel(tab: $tab)
-                        .frame(maxWidth: 520, maxHeight: .infinity)
+                        .frame(maxWidth: 640, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .padding(.horizontal, 56)
@@ -50,8 +51,8 @@ struct MacFullPlayer: View {
 
     private func nowPlaying(_ item: AudioItem) -> some View {
         VStack(spacing: 22) {
-            MacCover(itemId: item.AlbumId ?? item.id, radius: 14, imageSize: 1000)
-                .frame(maxWidth: 420)
+            MacCover(itemId: item.AlbumId ?? item.id, radius: 14, imageSize: 1200)
+                .frame(maxWidth: 520)
 
             VStack(spacing: 4) {
                 Text(item.Name).font(.title2.weight(.bold)).lineLimit(2).multilineTextAlignment(.center)

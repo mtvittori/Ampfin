@@ -10,7 +10,14 @@ enum WindowSnapshot {
         let delay = defaults.object(forKey: "provaFotoDopo") == nil ? 8 : defaults.double(forKey: "provaFotoDopo")
         // A wide window, like the one a person would use (saved frames would shrink it).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard !defaults.bool(forKey: "provaSchermoIntero") else { return }
             NSApp.windows.first(where: { $0.isVisible })?.setContentSize(NSSize(width: 1440, height: 900))
+        }
+        // `-provaSchermoIntero YES` puts the window in full screen first.
+        if defaults.bool(forKey: "provaSchermoIntero") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                NSApp.windows.first(where: { $0.isVisible })?.toggleFullScreen(nil)
+            }
         }
         // `-provaImpostazioni YES` opens the Settings window and photographs that one.
         let settings = defaults.bool(forKey: "provaImpostazioni")
