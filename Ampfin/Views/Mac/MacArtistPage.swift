@@ -18,6 +18,7 @@ struct MacArtistPage: View {
         let albums = viewModel.albums(byArtist: artist)
         let shown = showAll ? tracks : Array(tracks.prefix(8))
 
+        MacTintedPage(imageURLs: Array(viewModel.artistImageURLs(for: artist, maxWidth: 800).reversed())) { _ in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 HStack(spacing: 28) {
@@ -66,6 +67,7 @@ struct MacArtistPage: View {
             .padding(.horizontal, 28)
             .padding(.top, 20)
             .padding(.bottom, 40)
+        }
         }
         .navigationTitle(artist.Name)
         .sheet(item: $infoTrack) { track in

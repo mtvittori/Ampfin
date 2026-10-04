@@ -315,3 +315,36 @@ struct MacSectionTitle: View {
     }
 }
 #endif
+
+#if os(macOS)
+// MARK: - Tinted page
+
+/// A page colored like the picture it shows, as the album and artist pages were before:
+/// the page takes the color of the picture's bottom edge, a little deeper towards the bottom,
+/// and text, buttons and rows switch to light or dark to read on it.
+struct MacTintedPage<Content: View>: View {
+    let imageURLs: [URL]
+    @ViewBuilder let content: (HeroPalette?) -> Content
+
+    @Environment(\.colorScheme) private var systemScheme
+    @State private var palette: HeroPalette?
+
+    var body: some View {
+        content(palette)
+            .environment(\.colorScheme, palette.map { $0.isLight ? .light : .dark } ?? systemScheme)
+            .background {
+                ZStack {
+                    palette?.background ?? Color(nsColor: .windowBackgroundColor)
+                    LinearGradient(colors: [.clear, .black.opacity((palette?.isLight ?? (systemScheme == .light)) ? 0.08 : 0.25)],
+                                   startPoint: .center, endPoint: .bottom)
+                }
+                .ignoresSafeArea()
+            }
+            .animation(.easeInOut(duration: 0.5), value: palette)
+            .task(id: imageURLs) {
+                guard let image = await ImageLoader.shared.firstImage(from: imageURLs) else { return }
+                palette = HeroPalette(image: image)
+            }
+    }
+}
+#endif

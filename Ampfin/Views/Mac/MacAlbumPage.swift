@@ -29,10 +29,32 @@ struct MacAlbumPage: View {
     }
 
     var body: some View {
-        // Two panes, as Music's album view: the cover and the facts stay on the left while
-        // the songs scroll on the right.
+        MacTintedPage(imageURLs: [viewModel.artworkURL(for: album.id, size: 600)].compactMap { $0 }) { palette in
+            layout(palette)
+        }
+        .navigationTitle(album.Name)
+        .task(id: album.id) {
+            await viewModel.fetchAlbumTracks(albumId: album.id)
+        }
+        .sheet(item: $infoTrack) { track in
+            ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)
+                .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $showAlbumInfo) {
+            ItemInfoSheet(itemId: album.Id, kind: .album, title: album.Name)
+                .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $showCoverPicker) {
+            AlbumCoverPicker(album: album)
+                .environmentObject(viewModel)
+        }
+    }
+
+    /// Two panes, as Music's album view: the cover and the facts stay on the left while
+    /// the songs scroll on the right.
+    private func layout(_ palette: HeroPalette?) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            infoPane
+            infoPane(palette)
                 .padding(.horizontal, 28)
                 .padding(.top, 24)
                 .padding(.bottom, 28)
@@ -61,22 +83,6 @@ struct MacAlbumPage: View {
                 }
             }
         }
-        .navigationTitle(album.Name)
-        .task(id: album.id) {
-            await viewModel.fetchAlbumTracks(albumId: album.id)
-        }
-        .sheet(item: $infoTrack) { track in
-            ItemInfoSheet(itemId: track.Id, kind: .track, title: track.Name)
-                .environmentObject(viewModel)
-        }
-        .sheet(isPresented: $showAlbumInfo) {
-            ItemInfoSheet(itemId: album.Id, kind: .album, title: album.Name)
-                .environmentObject(viewModel)
-        }
-        .sheet(isPresented: $showCoverPicker) {
-            AlbumCoverPicker(album: album)
-                .environmentObject(viewModel)
-        }
     }
 
     /// Compilations: the artist is shown per song only when songs differ from the album's.
@@ -84,7 +90,7 @@ struct MacAlbumPage: View {
         tracks.contains { ($0.mainArtistName ?? "") != (album.AlbumArtist ?? "") && $0.mainArtistName != nil }
     }
 
-    private var infoPane: some View {
+    private func infoPane(_ palette: HeroPalette?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             MacCover(itemId: album.id, radius: 12, imageSize: 800)
                 .padding(.bottom, 14)
@@ -95,11 +101,11 @@ struct MacAlbumPage: View {
             if let name = album.AlbumArtist {
                 if let artist {
                     NavigationLink(value: artist) {
-                        Text(name).font(.title3).foregroundStyle(.tint)
+                        Text(name).font(.title3).foregroundStyle(palette.map { AnyShapeStyle($0.foreground.opacity(0.85)) } ?? AnyShapeStyle(.tint))
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text(name).font(.title3).foregroundStyle(.tint)
+                    Text(name).font(.title3).foregroundStyle(palette.map { AnyShapeStyle($0.foreground.opacity(0.85)) } ?? AnyShapeStyle(.tint))
                 }
             }
             if !caption.isEmpty {
