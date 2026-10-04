@@ -20,6 +20,7 @@ final class MacPlayerState {
 
 private struct MacPageChrome: ViewModifier {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @Environment(MacPlayerState.self) private var state
 
     func body(content: Content) -> some View {
         content
@@ -32,6 +33,8 @@ private struct MacPageChrome: ViewModifier {
             }
             .toolbar(removing: .title)
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            // With Now Playing open, Back and the sidebar button would sit on top of it.
+            .toolbarVisibility(state.showFullPlayer ? .hidden : .automatic, for: .windowToolbar)
     }
 }
 

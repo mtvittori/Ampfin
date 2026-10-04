@@ -19,6 +19,19 @@ enum WindowSnapshot {
                 NSApp.windows.first(where: { $0.isVisible })?.toggleFullScreen(nil)
             }
         }
+        // `-provaClic x,y` clicks that point (from the window's top-left, in points) after 15 s.
+        if let point = defaults.string(forKey: "provaClic")?.split(separator: ",").compactMap({ Double($0) }), point.count == 2 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                guard let window = NSApp.windows.first(where: { $0.isVisible }) else { return }
+                let location = NSPoint(x: point[0], y: window.frame.height - point[1])
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        window.sendEvent(event)
+                    }
+                }
+            }
+        }
         // `-provaImpostazioni YES` opens the Settings window and photographs that one.
         let settings = defaults.bool(forKey: "provaImpostazioni")
         if settings {

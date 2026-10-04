@@ -25,7 +25,7 @@ struct MacFullPlayer: View {
                         .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .padding(.horizontal, 56)
-                .padding(.top, 56)
+                .padding(.top, 72)
                 .padding(.bottom, 40)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
@@ -38,7 +38,10 @@ struct MacFullPlayer: View {
                     .glassEffect(.regular.interactive(), in: .circle)
                     .keyboardShortcut(.cancelAction)
                     .help("Chiudi")
-                    .padding(20)
+                    // Below the title bar: up there clicks move the window (or, in full
+                    // screen, reveal the menu bar) instead of reaching the button.
+                    .padding(.leading, 24)
+                    .padding(.top, 52)
                 }
             }
             .onExitCommand { close() }
