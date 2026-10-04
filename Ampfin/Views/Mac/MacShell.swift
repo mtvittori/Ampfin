@@ -35,25 +35,24 @@ struct MacShell: View {
             }
             // Choosing another section starts from its own page again.
             .id(isSearching ? Section.search : (selection ?? .home))
-        }
-        .searchable(text: $viewModel.globalSearchQuery, placement: .sidebar, prompt: "Cerca")
-        .toolbar(removing: .title)
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                MacTransportControls(player: viewModel.playerManager)
-            }
-            ToolbarItem(placement: .navigation) {
-                MacNowPlayingBar()
-            }
-            ToolbarItemGroup(placement: .automatic) {
-                Button {
-                    showSidePanel.toggle()
-                } label: {
-                    Label("Coda e testi", systemImage: "list.bullet")
+            // Music's toolbar: transport on the left, the now-playing lozenge in the middle,
+            // lyrics and queue on the right, then the search field.
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    MacTransportControls(player: viewModel.playerManager)
                 }
-                .help("Mostra la coda e i testi")
+                ToolbarItem(placement: .principal) {
+                    MacNowPlayingBar()
+                }
+                .sharedBackgroundVisibility(.hidden)
+                ToolbarItemGroup(placement: .primaryAction) {
+                    panelButton(.lyrics, systemImage: "quote.bubble", help: "Testi")
+                    panelButton(.queue, systemImage: "list.bullet", help: "Coda")
+                }
             }
         }
+        .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca")
+        .toolbar(removing: .title)
         .inspector(isPresented: $showSidePanel) {
             MacSidePanel(tab: $panelTab)
                 .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
@@ -83,6 +82,24 @@ struct MacShell: View {
         #endif
     }
 
+    /// Opens the right-hand panel on a tab, or closes it when that tab is already showing.
+    private func panelButton(_ tab: MacSidePanel.Tab, systemImage: String, help: String) -> some View {
+        let active = showSidePanel && panelTab == tab.rawValue
+        return Button {
+            if active {
+                showSidePanel = false
+            } else {
+                panelTab = tab.rawValue
+                showSidePanel = true
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .symbolVariant(active ? .fill : .none)
+                .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        }
+        .help(help)
+    }
+
     // MARK: - Sidebar
 
     private var sidebar: some View {
@@ -100,6 +117,17 @@ struct MacShell: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SettingsLink {
+                Label("Impostazioni", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
         // Typing in the search field shows the results; clearing it goes back.
         .onChange(of: isSearching) { _, searching in
             if !searching, selection == .search { selection = .home }

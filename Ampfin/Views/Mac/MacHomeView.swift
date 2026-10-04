@@ -23,7 +23,7 @@ struct MacHomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 34) {
-                MacPageHeader(title: "Home", subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
+                MacPageHeader(title: "Home", subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "it_IT"))).capitalized)
                 if !topPicks.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         MacSectionTitle(title: "Scelti per te")

@@ -87,7 +87,10 @@ struct MacNowPlayingBar: View {
             }
         }
         .frame(minWidth: 240, idealWidth: 420, maxWidth: 520)
-        .frame(height: 38)
+        .frame(height: 40)
+        // Music's lozenge: a soft rounded rectangle, light on the toolbar.
+        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.primary.opacity(0.1)))
     }
 }
 

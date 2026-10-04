@@ -110,6 +110,7 @@ struct SettingsView: View {
                 Text("Quando attivo, il vetro di card e barra di riproduzione viene tinto con il colore dominante della copertina. Disattiva per il vetro predefinito. Usa lo slider per regolare quanto marcata sia la tinta.")
             }
 
+            #if os(iOS)
             // MARK: - Home
             Section {
                 Picker("Barra in alto", selection: $topBarStyle) {
@@ -131,6 +132,7 @@ struct SettingsView: View {
             } footer: {
                 Text("Lo sfondo della copertina nella schermata Play, sfocata o nitida.")
             }
+            #endif
 
             // MARK: - Audio output
             AudioOutputSection()
