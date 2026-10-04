@@ -110,6 +110,7 @@ struct MacPlayButtons: View {
                 viewModel.playerManager.playAlbumShuffled(tracks: tracks)
             } label: {
                 Label("Casuale", systemImage: "shuffle").frame(minWidth: 90)
+                    .foregroundStyle(.primary)
             }
             .buttonStyle(.bordered)
         }

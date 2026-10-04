@@ -58,6 +58,7 @@ struct MacHomeView: View {
             .padding(.top, 20)
             .padding(.bottom, 40)
         }
+        .macScrollTracking()
         .navigationTitle("Home")
         .task(id: "\(viewModel.albums.count)|\(viewModel.recentlyPlayedAlbums.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
             topPicks = viewModel.homePicks()
@@ -119,6 +120,7 @@ struct MacAlbumGridPage: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle(title)
         .navigationSubtitle("\(albums.count.formatted()) album")
     }

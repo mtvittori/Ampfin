@@ -46,6 +46,7 @@ struct MacAlbumsView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Album")
         .toolbar {
             ToolbarItem(placement: .automatic) {
@@ -76,6 +77,7 @@ struct MacRecentView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Aggiunti di recente")
     }
 }
@@ -118,6 +120,7 @@ struct MacArtistsView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Artisti")
         .sheet(item: $mergeTarget) { artist in
             MergeArtistsSheet(main: artist)
@@ -149,6 +152,7 @@ struct MacTracksView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 10)
             MacSongsTable(tracks: shown)
+                .macScrollTracking()
         }
         .navigationTitle("Brani")
     }
@@ -203,6 +207,7 @@ struct MacGenresView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Generi")
     }
 }
@@ -241,6 +246,7 @@ struct MacGenrePage: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle(genreName)
     }
 }
@@ -285,6 +291,7 @@ struct MacFavoritesView: View {
                 }
                 .padding(28)
             }
+            .macScrollTracking()
             .navigationTitle("Preferiti")
         }
     }

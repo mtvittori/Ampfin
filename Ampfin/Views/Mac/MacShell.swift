@@ -46,9 +46,8 @@ struct MacShell: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
 
     @State private var selection: MacSection? = .home
-    @State private var showSidePanel = false
     @State private var path = NavigationPath()
-    @AppStorage("macSidePanelTab") private var panelTab = MacSidePanel.Tab.queue.rawValue
+    @State private var playerState = MacPlayerState()
 
     private let library: [MacSection] = [.recent, .artists, .albums, .tracks, .genres, .favorites]
 
@@ -58,29 +57,35 @@ struct MacShell: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
         } detail: {
             NavigationStack(path: $path) {
+                // Every page, the pushed ones too, carries the playback bar and the clear toolbar.
                 detail
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationDestination(for: AlbumItem.self) { AlbumTracksListView(album: $0) }
-                    .navigationDestination(for: ArtistItem.self) { ArtistAlbumsView(artist: $0) }
-                    .navigationDestination(for: String.self) { MacGenrePage(genreName: $0) }
+                    .macPageChrome()
+                    .navigationDestination(for: AlbumItem.self) { AlbumTracksListView(album: $0).macPageChrome() }
+                    .navigationDestination(for: ArtistItem.self) { ArtistAlbumsView(artist: $0).macPageChrome() }
+                    .navigationDestination(for: String.self) { MacGenrePage(genreName: $0).macPageChrome() }
             }
             // Choosing another section starts from its own page again.
             .id(selection ?? .home)
-            // Pages scroll under the playback bar, with room to see their last row.
-            .contentMargins(.bottom, 96, for: .scrollContent)
-            .overlay(alignment: .bottom) {
-                MacPlaybackBar(player: viewModel.playerManager, showPanel: $showSidePanel, panelTab: $panelTab)
-                    .frame(maxWidth: 720)
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 20)
-            }
-            .toolbar(removing: .title)
-            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
-        .inspector(isPresented: $showSidePanel) {
-            MacSidePanel(tab: $panelTab)
+        .inspector(isPresented: $playerState.showPanel) {
+            MacSidePanel(tab: $playerState.panelTab)
                 .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
         }
+        // Now Playing over the whole window, rising from the bar.
+        .overlay {
+            if playerState.showFullPlayer {
+                MacFullPlayer(player: viewModel.playerManager)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(1)
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.9), value: playerState.showFullPlayer)
+        .onChange(of: viewModel.currentlyPlayingItem == nil) { _, stopped in
+            if stopped { playerState.showFullPlayer = false }
+        }
+        .onChange(of: selection) { playerState.minimized = false }
+        .environment(playerState)
         .frame(minWidth: 900, minHeight: 600)
         #if DEBUG
         .task {
@@ -102,8 +107,26 @@ struct MacShell: View {
                 viewModel.globalSearchQuery = query
             }
             if let panel = defaults.string(forKey: "provaPannello") {
-                panelTab = panel == "lyrics" ? MacSidePanel.Tab.lyrics.rawValue : MacSidePanel.Tab.queue.rawValue
-                showSidePanel = true
+                playerState.panelTab = panel == "lyrics" ? MacSidePanel.Tab.lyrics.rawValue : MacSidePanel.Tab.queue.rawValue
+                playerState.showPanel = true
+            }
+            // `-provaPlay <artist>` starts that artist muted and pauses at once, so the bar
+            // and the player have something to show without a sound; `-provaFull YES` opens it.
+            if let name = defaults.string(forKey: "provaPlay"),
+               let artist = viewModel.artists.first(where: { $0.Name.localizedCaseInsensitiveCompare(name) == .orderedSame }),
+               let first = viewModel.tracks(byArtist: artist).first {
+                let player = viewModel.playerManager!
+                let volume = player.volume
+                player.volume = 0
+                player.play(item: first, in: viewModel.tracks(byArtist: artist))
+                for _ in 0..<60 where viewModel.currentTime <= 0 { try? await Task.sleep(for: .milliseconds(250)) }
+                player.pause()
+                player.volume = volume
+                if defaults.bool(forKey: "provaFull") { playerState.showFullPlayer = true }
+            }
+            if defaults.bool(forKey: "provaMini") {
+                try? await Task.sleep(for: .seconds(1))
+                playerState.minimized = true
             }
         }
         #endif

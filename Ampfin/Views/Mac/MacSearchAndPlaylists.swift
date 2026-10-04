@@ -113,6 +113,7 @@ struct MacSearchView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Cerca")
         .task(id: "\(query)|\(viewModel.audioItems.count)|\(viewModel.artists.count)") {
             await search()
@@ -192,6 +193,7 @@ struct MacPlaylistsView: View {
             }
             .padding(28)
         }
+        .macScrollTracking()
         .navigationTitle("Playlist")
         .toolbar {
             ToolbarItem(placement: .automatic) {

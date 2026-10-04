@@ -80,8 +80,12 @@ struct MacAlbumPage: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                    // On the cover's color the playing song is marked in the page's own text
+                    // color: the accent (often the same color) would vanish on it.
+                    .tint(palette?.foreground ?? .accentColor)
                 }
             }
+            .macScrollTracking()
         }
     }
 

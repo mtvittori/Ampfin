@@ -18,7 +18,7 @@ struct MacArtistPage: View {
         let albums = viewModel.albums(byArtist: artist)
         let shown = showAll ? tracks : Array(tracks.prefix(8))
 
-        MacTintedPage(imageURLs: Array(viewModel.artistImageURLs(for: artist, maxWidth: 800).reversed())) { _ in
+        MacTintedPage(imageURLs: Array(viewModel.artistImageURLs(for: artist, maxWidth: 800).reversed())) { palette in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 HStack(spacing: 28) {
@@ -47,6 +47,7 @@ struct MacArtistPage: View {
                                             selection: $selection, onInfo: { infoTrack = $0 })
                             }
                         }
+                        .tint(palette?.foreground ?? .accentColor)
                         if tracks.count > 8 {
                             Button(showAll ? "Mostra meno" : "Mostra tutti (\(tracks.count))") { showAll.toggle() }
                                 .buttonStyle(.link)
@@ -68,6 +69,7 @@ struct MacArtistPage: View {
             .padding(.top, 20)
             .padding(.bottom, 40)
         }
+        .macScrollTracking()
         }
         .navigationTitle(artist.Name)
         .sheet(item: $infoTrack) { track in

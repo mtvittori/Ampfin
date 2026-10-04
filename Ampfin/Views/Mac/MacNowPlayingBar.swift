@@ -8,15 +8,35 @@ import SwiftUI
 
 struct MacPlaybackBar: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @Environment(MacPlayerState.self) private var state
     @ObservedObject var player: AudioPlayerManager
-    @Binding var showPanel: Bool
-    @Binding var panelTab: String
 
     @State private var showVolume = false
+    @State private var hovering = false
+    @Namespace private var glass
 
     private var hasItem: Bool { player.currentlyPlayingItem != nil }
+    /// Small while reading down a page, full again under the pointer (Mac) or scrolling up.
+    private var compact: Bool { state.minimized && !hovering && !showVolume }
 
     var body: some View {
+        Group {
+            if compact {
+                compactBar
+            } else {
+                fullBar
+            }
+        }
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffectID("bar", in: glass)
+        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+        .onHover { hovering = $0 }
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: compact)
+    }
+
+    // MARK: - Full
+
+    private var fullBar: some View {
         HStack(spacing: 16) {
             transport
             center
@@ -24,9 +44,41 @@ struct MacPlaybackBar: View {
             accessories
         }
         .padding(.horizontal, 20)
+        .frame(maxWidth: 720)
         .frame(height: 54)
-        .glassEffect(.regular, in: .capsule)
-        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+    }
+
+    // MARK: - Compact
+
+    /// As the iPhone's accessory when the tab bar shrinks: cover, title, play/pause.
+    private var compactBar: some View {
+        HStack(spacing: 10) {
+            if let item = player.currentlyPlayingItem {
+                Button { state.showFullPlayer = true } label: {
+                    HStack(spacing: 8) {
+                        MacCover(itemId: item.AlbumId ?? item.id, size: 30, radius: 5, imageSize: 100)
+                        Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            .frame(maxWidth: 180, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Apri In riproduzione")
+            } else {
+                Image(systemName: "music.note").foregroundStyle(.secondary)
+            }
+            Button { player.togglePlayPause() } label: {
+                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 16))
+                    .frame(width: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasItem)
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 14)
+        .frame(height: 44)
+        .fixedSize()
     }
 
     // MARK: - Left
@@ -68,11 +120,23 @@ struct MacPlaybackBar: View {
     private var center: some View {
         if let item = player.currentlyPlayingItem {
             HStack(spacing: 10) {
-                MacCover(itemId: item.AlbumId ?? item.id, size: 38, radius: 5, imageSize: 100)
+                // Cover and titles open the whole-window player, as tapping the bar on iPhone.
+                Button { state.showFullPlayer = true } label: {
+                    MacCover(itemId: item.AlbumId ?? item.id, size: 38, radius: 5, imageSize: 100)
+                }
+                .buttonStyle(.plain)
+                .help("Apri In riproduzione")
+
                 VStack(spacing: 1) {
-                    Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Button { state.showFullPlayer = true } label: {
+                        VStack(spacing: 1) {
+                            Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
+                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     ClockReader(clock: viewModel.clock) { time in
                         HStack(spacing: 6) {
                             Text(MacFormat.clock(time)).font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
@@ -83,6 +147,7 @@ struct MacPlaybackBar: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
+
                 Button { viewModel.toggleFavoriteTrack(item.id) } label: {
                     Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
                         .foregroundStyle(viewModel.isTrackFavorite(item.id) ? AnyShapeStyle(.pink) : AnyShapeStyle(.secondary))
@@ -101,8 +166,8 @@ struct MacPlaybackBar: View {
 
     private var accessories: some View {
         HStack(spacing: 14) {
-            panelButton("lyrics", systemImage: "quote.bubble", help: "Testi")
-            panelButton("queue", systemImage: "list.bullet", help: "Coda")
+            panelButton(.lyrics, systemImage: "quote.bubble", help: "Testi")
+            panelButton(.queue, systemImage: "list.bullet", help: "Coda")
 
             AirPlayView()
                 .frame(width: 24, height: 24)
@@ -115,26 +180,20 @@ struct MacPlaybackBar: View {
             .buttonStyle(.plain)
             .help("Volume")
             .popover(isPresented: $showVolume, arrowEdge: .top) {
-                HStack(spacing: 10) {
-                    Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-                    Slider(value: Binding(get: { Double(player.volume) }, set: { player.volume = Float($0) }), in: 0...1)
-                        .frame(width: 150)
-                    Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
-                }
-                .padding(14)
+                MacVolumeSlider(player: player).padding(14)
             }
         }
     }
 
     /// Opens the right-hand panel on a tab, or closes it when that tab is already showing.
-    private func panelButton(_ tab: String, systemImage: String, help: String) -> some View {
-        let active = showPanel && panelTab == tab
+    private func panelButton(_ tab: MacSidePanel.Tab, systemImage: String, help: String) -> some View {
+        let active = state.showPanel && state.panelTab == tab.rawValue
         return Button {
             if active {
-                showPanel = false
+                state.showPanel = false
             } else {
-                panelTab = tab
-                showPanel = true
+                state.panelTab = tab.rawValue
+                state.showPanel = true
             }
         } label: {
             Image(systemName: systemImage)
@@ -144,6 +203,20 @@ struct MacPlaybackBar: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// The app volume, with the small and big speaker at the ends.
+struct MacVolumeSlider: View {
+    @ObservedObject var player: AudioPlayerManager
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+            Slider(value: Binding(get: { Double(player.volume) }, set: { player.volume = Float($0) }), in: 0...1)
+                .frame(width: 150)
+            Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
+        }
     }
 }
 
