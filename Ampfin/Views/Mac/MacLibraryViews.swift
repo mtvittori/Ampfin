@@ -58,6 +58,28 @@ struct MacAlbumsView: View {
     }
 }
 
+// MARK: - Recently added
+
+struct MacRecentView: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+
+    var body: some View {
+        let albums = Array(viewModel.albums
+            .sorted { ($0.dateAddedDate ?? .distantPast) > ($1.dateAddedDate ?? .distantPast) }
+            .prefix(200))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                MacPageHeader(title: "Aggiunti di recente", subtitle: albums.isEmpty ? nil : "\(albums.count) album")
+                LazyVGrid(columns: macAlbumColumns, alignment: .leading, spacing: 26) {
+                    ForEach(albums) { MacAlbumCard(album: $0) }
+                }
+            }
+            .padding(28)
+        }
+        .navigationTitle("Aggiunti di recente")
+    }
+}
+
 // MARK: - Artists
 
 struct MacArtistsView: View {

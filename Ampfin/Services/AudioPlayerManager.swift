@@ -56,6 +56,14 @@ final class AudioPlayerManager: ObservableObject {
     var similarProvider: ((AudioItem) async -> [AudioItem])?
     private var autoplayTask: Task<Void, Never>?
 
+    /// App volume, 0...1, applied to the engine's output (the Mac player has its own slider).
+    @Published var volume: Float = UserDefaults.standard.object(forKey: "playerVolume") as? Float ?? 1 {
+        didSet {
+            UserDefaults.standard.set(volume, forKey: "playerVolume")
+            eqManager.audioEngine.mainMixerNode.outputVolume = volume
+        }
+    }
+
     /// The whole play queue, for the "Up next" list.
     var queue: [AudioItem] { playQueue }
 
@@ -89,6 +97,7 @@ final class AudioPlayerManager: ObservableObject {
     init(streamURLProvider: @escaping (String) -> URL?, artworkURLProvider: ((String, Int) -> URL?)? = nil) {
         self.streamURLProvider = streamURLProvider
         self.artworkURLProvider = artworkURLProvider
+        eqManager.audioEngine.mainMixerNode.outputVolume = volume
         configureAudioSessionIfNeeded()
         setupRemoteCommandCenter()
         #if os(iOS)

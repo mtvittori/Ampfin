@@ -120,6 +120,51 @@ struct MacSearchView: View {
     }
 }
 
+// MARK: - Search page
+
+/// The "Cerca" section: a field at the top, the results below.
+struct MacSearchPage: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    @FocusState private var focused: Bool
+
+    private var hasQuery: Bool {
+        !viewModel.globalSearchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Cerca brani, album, artisti", text: $viewModel.globalSearchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($focused)
+                if hasQuery {
+                    Button { viewModel.globalSearchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(.quaternary.opacity(0.7), in: Capsule())
+            .padding(.horizontal, 28)
+            .padding(.top, 14)
+
+            if hasQuery {
+                MacSearchView(query: $viewModel.globalSearchQuery)
+            } else {
+                ContentUnavailableView("Cerca nella tua libreria", systemImage: "magnifyingglass",
+                                       description: Text("Brani, album e artisti."))
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .navigationTitle("Cerca")
+        .onAppear { focused = true }
+    }
+}
+
 // MARK: - Playlists
 
 struct MacPlaylistsView: View {

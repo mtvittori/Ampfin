@@ -1,96 +1,149 @@
 // MacNowPlayingBar.swift
-// The toolbar: shuffle / previous / play / next / repeat on the left, and in the middle
-// the lozenge with the cover, title, artist and a thin progress line you can click to seek.
+// The playback bar as Music shows it on the Mac: a glass capsule floating at the bottom of
+// the window. Shuffle / previous / play / next / repeat on the left, the cover with title,
+// artist and a thin progress line in the middle, lyrics, queue, AirPlay and volume on the right.
 
 #if os(macOS)
 import SwiftUI
 
-struct MacTransportControls: View {
+struct MacPlaybackBar: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject var player: AudioPlayerManager
+    @Binding var showPanel: Bool
+    @Binding var panelTab: String
+
+    @State private var showVolume = false
+
+    private var hasItem: Bool { player.currentlyPlayingItem != nil }
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 16) {
+            transport
+            center
+                .frame(maxWidth: .infinity)
+            accessories
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 54)
+        .glassEffect(.regular, in: .capsule)
+        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+    }
+
+    // MARK: - Left
+
+    private var transport: some View {
+        HStack(spacing: 14) {
             Button { player.toggleShuffle() } label: {
-                Image(systemName: "shuffle")
-                    .foregroundStyle(player.isShuffled ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                Image(systemName: "shuffle").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(player.isShuffled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
             .help("Casuale")
-            .disabled(player.currentlyPlayingItem == nil)
 
-            Button { player.backward() } label: { Image(systemName: "backward.fill") }
+            Button { player.backward() } label: { Image(systemName: "backward.fill").font(.system(size: 15)) }
                 .help("Precedente")
-                .disabled(player.currentlyPlayingItem == nil)
 
             Button { player.togglePlayPause() } label: {
                 Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 15))
-                    .frame(width: 22)
+                    .font(.system(size: 21))
+                    .frame(width: 24)
             }
             .help(viewModel.isPlaying ? "Pausa" : "Riproduci")
-            .disabled(player.currentlyPlayingItem == nil)
 
-            Button { player.forward() } label: { Image(systemName: "forward.fill") }
+            Button { player.forward() } label: { Image(systemName: "forward.fill").font(.system(size: 15)) }
                 .help("Successivo")
-                .disabled(player.currentlyPlayingItem == nil)
 
             Button { viewModel.toggleRepeatMode() } label: {
-                Image(systemName: viewModel.repeatMode.iconName)
-                    .foregroundStyle(viewModel.repeatMode == .off ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+                Image(systemName: viewModel.repeatMode.iconName).font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(viewModel.repeatMode == .off ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
             }
             .help("Ripeti")
         }
+        .buttonStyle(.plain)
+        .disabled(!hasItem)
     }
-}
 
-struct MacNowPlayingBar: View {
-    @EnvironmentObject var viewModel: JellyfinViewModel
+    // MARK: - Middle
 
-    var body: some View {
-        Group {
-            if let item = viewModel.currentlyPlayingItem {
-                HStack(spacing: 10) {
-                    MacCover(itemId: item.AlbumId ?? item.id, size: 38, radius: 4, imageSize: 100)
-
-                    VStack(spacing: 1) {
-                        Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                        Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        ClockReader(clock: viewModel.clock) { time in
-                            HStack(spacing: 6) {
-                                Text(MacFormat.clock(time)).font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
-                                MacScrubber(value: time, total: item.duration ?? 0) { viewModel.playerManager.seek(to: $0) }
-                                Text("-" + MacFormat.clock(max((item.duration ?? 0) - time, 0)))
-                                    .font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
-                            }
+    @ViewBuilder
+    private var center: some View {
+        if let item = player.currentlyPlayingItem {
+            HStack(spacing: 10) {
+                MacCover(itemId: item.AlbumId ?? item.id, size: 38, radius: 5, imageSize: 100)
+                VStack(spacing: 1) {
+                    Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    ClockReader(clock: viewModel.clock) { time in
+                        HStack(spacing: 6) {
+                            Text(MacFormat.clock(time)).font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
+                            MacScrubber(value: time, total: item.duration ?? 0) { viewModel.playerManager.seek(to: $0) }
+                            Text("-" + MacFormat.clock(max((item.duration ?? 0) - time, 0)))
+                                .font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
                         }
                     }
-                    .frame(maxWidth: .infinity)
-
-                    Button {
-                        viewModel.toggleFavoriteTrack(item.id)
-                    } label: {
-                        Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
-                            .foregroundStyle(viewModel.isTrackFavorite(item.id) ? AnyShapeStyle(.pink) : AnyShapeStyle(.secondary))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Preferito")
                 }
-                .padding(.horizontal, 8)
-            } else {
-                Text("Ampfin")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
+                Button { viewModel.toggleFavoriteTrack(item.id) } label: {
+                    Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
+                        .foregroundStyle(viewModel.isTrackFavorite(item.id) ? AnyShapeStyle(.pink) : AnyShapeStyle(.secondary))
+                }
+                .buttonStyle(.plain)
+                .help("Preferito")
+            }
+        } else {
+            Image(systemName: "music.note")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Right
+
+    private var accessories: some View {
+        HStack(spacing: 14) {
+            panelButton("lyrics", systemImage: "quote.bubble", help: "Testi")
+            panelButton("queue", systemImage: "list.bullet", help: "Coda")
+
+            AirPlayView()
+                .frame(width: 24, height: 24)
+                .help("AirPlay")
+
+            Button { showVolume.toggle() } label: {
+                Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.plain)
+            .help("Volume")
+            .popover(isPresented: $showVolume, arrowEdge: .top) {
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { Double(player.volume) }, set: { player.volume = Float($0) }), in: 0...1)
+                        .frame(width: 150)
+                    Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
+                }
+                .padding(14)
             }
         }
-        .frame(minWidth: 240, idealWidth: 420, maxWidth: 520)
-        .frame(height: 40)
-        // Music's lozenge: a soft rounded rectangle, light on the toolbar.
-        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.primary.opacity(0.1)))
+    }
+
+    /// Opens the right-hand panel on a tab, or closes it when that tab is already showing.
+    private func panelButton(_ tab: String, systemImage: String, help: String) -> some View {
+        let active = showPanel && panelTab == tab
+        return Button {
+            if active {
+                showPanel = false
+            } else {
+                panelTab = tab
+                showPanel = true
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 15))
+                .symbolVariant(active ? .fill : .none)
+                .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 

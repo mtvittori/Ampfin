@@ -4,7 +4,10 @@ import AVKit
 #if os(macOS)
 struct AirPlayView: NSViewRepresentable {
     func makeNSView(context: Context) -> AVRoutePickerView {
-        AVRoutePickerView()
+        let picker = AVRoutePickerView()
+        // Just the icon, without the gray button behind it.
+        picker.isRoutePickerButtonBordered = false
+        return picker
     }
 
     func updateNSView(_ nsView: AVRoutePickerView, context: Context) {}
