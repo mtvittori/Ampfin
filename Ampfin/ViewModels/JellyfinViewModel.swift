@@ -548,6 +548,13 @@ class JellyfinViewModel: ObservableObject {
         }
     }
 
+    /// Moves a song that just played to the top of "recently played" without waiting for the server.
+    func noteRecentlyPlayed(_ itemId: String) {
+        guard let item = currentlyPlayingItem?.Id == itemId ? currentlyPlayingItem
+                : recentlyPlayedTracks.first(where: { $0.Id == itemId }) else { return }
+        recentlyPlayedTracks = [item] + recentlyPlayedTracks.filter { $0.Id != itemId }
+    }
+
     func fetchRecentlyPlayedTracksIfNeeded(force: Bool = false) async {
         guard isLoggedIn else { return }
         if !force && !recentlyPlayedTracks.isEmpty {
@@ -939,8 +946,11 @@ class JellyfinViewModel: ObservableObject {
         playerManager.similarProvider = { item in
             (try? await api.fetchInstantMix(itemId: item.Id)) ?? []
         }
-        playerManager.markPlayedProvider = { itemId in
-            try await api.markItemPlayed(itemId: itemId)
+        playerManager.markPlayedProvider = { [weak self] itemId in
+            // Shown at once, also when the server can't be reached; the server's list
+            // replaces it once the report goes through.
+            await MainActor.run { self?.noteRecentlyPlayed(itemId) }
+            try await api.reportPlayed(itemId: itemId)
         }
         playerManager.onDidReportPlayed = { [weak self] _ in
             Task { @MainActor in

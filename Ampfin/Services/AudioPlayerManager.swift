@@ -100,6 +100,14 @@ final class AudioPlayerManager: ObservableObject {
         eqManager.audioEngine.mainMixerNode.outputVolume = volume
         configureAudioSessionIfNeeded()
         setupRemoteCommandCenter()
+        // A new output (CarPlay, Bluetooth) stops the engine: start it again if a song was on.
+        eqManager.onConfigurationChange = { [weak self] in
+            guard let self, self.isPlaying else { return }
+            self.eqManager.startEngine()
+            if let exception = AmpfinCatchException({ self.playerNode.play() }) {
+                print("Could not resume after an output change – \(exception.reason ?? "")")
+            }
+        }
         #if os(iOS)
         setupRouteChangeObserver()
         #endif
@@ -192,21 +200,33 @@ final class AudioPlayerManager: ObservableObject {
             currentAudioFile = audioFile
 
             let format = audioFile.processingFormat
-            eqManager.reconnect(withFormat: format)
+            guard eqManager.reconnect(withFormat: format) else {
+                print("Audio engine refused the format \(format)")
+                isPlaying = false
+                return
+            }
             eqManager.startEngine()
 
             seekOffset = 0
             scheduledStartFrame = 0
             playbackGeneration += 1
             let gen = playbackGeneration
-            playerNode.stop()
-            playerNode.scheduleFile(audioFile, at: nil) { [weak self] in
-                DispatchQueue.main.async {
-                    guard let self, self.playbackGeneration == gen else { return }
-                    self.handlePlaybackCompletion()
+            // AVAudioEngine raises (rather than throws) on a stopped engine or a format
+            // mismatch: caught here, it stops this song instead of the whole app.
+            if let exception = AmpfinCatchException({
+                playerNode.stop()
+                playerNode.scheduleFile(audioFile, at: nil) { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self, self.playbackGeneration == gen else { return }
+                        self.handlePlaybackCompletion()
+                    }
                 }
+                playerNode.play()
+            }) {
+                print("Failed to start playback – \(exception.name.rawValue): \(exception.reason ?? "")")
+                isPlaying = false
+                return
             }
-            playerNode.play()
             isPlaying = true
             startTimeUpdater()
             updateNowPlayingInfo()

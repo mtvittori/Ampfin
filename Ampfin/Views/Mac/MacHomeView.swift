@@ -60,7 +60,7 @@ struct MacHomeView: View {
         }
         .macScrollTracking()
         .navigationTitle("Home")
-        .task(id: "\(viewModel.albums.count)|\(viewModel.recentlyPlayedAlbums.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
+        .task(id: "\(viewModel.albums.count)|\(viewModel.currentlyPlayingItem?.Id ?? "")|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
             topPicks = viewModel.homePicks()
         }
         .task {

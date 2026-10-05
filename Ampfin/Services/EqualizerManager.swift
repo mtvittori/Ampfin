@@ -46,6 +46,14 @@ final class EqualizerManager: ObservableObject {
     let playerNode = AVAudioPlayerNode()
     private let eq: AVAudioUnitEQ
 
+    /// The format the chain is wired for. Rewiring is skipped when a song has the same
+    /// one: AVAudioEngine can raise an exception while connecting, and that aborted the app.
+    private var connectedFormat: AVAudioFormat?
+
+    /// Called when the system stops the engine because the output changed
+    /// (CarPlay, Bluetooth, headphones), so playback can start it again.
+    var onConfigurationChange: (() -> Void)?
+
     // MARK: - Init
 
     /// Reads the saved settings again, after a backup has been restored.
@@ -66,6 +74,14 @@ final class EqualizerManager: ObservableObject {
         self.eq = AVAudioUnitEQ(numberOfBands: 10)
 
         setupEngine()
+
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
+                                               object: audioEngine, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            // The engine is stopped and its formats may be stale: rewire on the next song.
+            self.connectedFormat = nil
+            self.onConfigurationChange?()
+        }
     }
 
     // MARK: - Engine Setup
@@ -90,22 +106,40 @@ final class EqualizerManager: ObservableObject {
         let defaultFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         audioEngine.connect(playerNode, to: eq, format: defaultFormat)
         audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: defaultFormat)
+        connectedFormat = defaultFormat
     }
 
     /// Reconnect the signal chain with the correct audio format from the file being played.
-    func reconnect(withFormat format: AVAudioFormat) {
+    /// Returns false when the engine refused the format even after a reset.
+    @discardableResult
+    func reconnect(withFormat format: AVAudioFormat) -> Bool {
+        if let connectedFormat, connectedFormat == format { return true }
+
         let wasRunning = audioEngine.isRunning
         if wasRunning { audioEngine.stop() }
 
+        var exception = AmpfinCatchException { self.wire(format) }
+        if let first = exception {
+            print("EqualizerManager: rewiring failed – \(first.name.rawValue): \(first.reason ?? "")")
+            // Start over from a clean graph and try once more.
+            playerNode.stop()
+            audioEngine.reset()
+            exception = AmpfinCatchException { self.wire(format) }
+        }
+        connectedFormat = exception == nil ? format : nil
+
+        if wasRunning {
+            startEngine()
+        }
+        return exception == nil
+    }
+
+    private func wire(_ format: AVAudioFormat) {
         audioEngine.disconnectNodeInput(eq)
         audioEngine.disconnectNodeInput(audioEngine.mainMixerNode)
 
         audioEngine.connect(playerNode, to: eq, format: format)
         audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: format)
-
-        if wasRunning {
-            startEngine()
-        }
     }
 
     func startEngine() {

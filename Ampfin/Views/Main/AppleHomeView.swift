@@ -101,7 +101,7 @@ struct AppleHomeView: View {
         .refreshable {
             await viewModel.fetchAllLibraryData()
         }
-        .task(id: "\(viewModel.albums.count)|\(viewModel.recentlyPlayedAlbums.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
+        .task(id: "\(viewModel.albums.count)|\(viewModel.currentlyPlayingItem?.Id ?? "")|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
             topPicks = viewModel.homePicks()
         }
         .task {
@@ -326,19 +326,34 @@ extension JellyfinViewModel {
         Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
     }
 
-    /// One card each from what you played, what you love and what just arrived,
-    /// then a few you haven't heard in a while.
+    /// The song playing, or else the last one played, and its album: the first top pick.
+    private var lastListened: (song: AudioItem, album: AlbumItem)? {
+        for song in [currentlyPlayingItem].compactMap({ $0 }) + recentlyPlayedTracks {
+            if let albumId = song.AlbumId, let album = albums.first(where: { $0.Id == albumId }) {
+                return (song, album)
+            }
+        }
+        return nil
+    }
+
+    /// First the album of the last song heard, then one each from what you love and what
+    /// just arrived, then a few you haven't heard in a while.
     func homePicks() -> [HomePick] {
         var picks: [HomePick] = []
         var used = Set<String>()
-        func add(_ album: AlbumItem?, _ caption: String) {
+        // The id leaves out the song, so the card isn't rebuilt when the next one starts.
+        func add(_ album: AlbumItem?, _ caption: String, key: String? = nil) {
             guard let album, used.insert(album.Id).inserted else { return }
-            picks.append(HomePick(id: "\(caption)-\(album.Id)", caption: caption, album: album))
+            picks.append(HomePick(id: "\(key ?? caption)-\(album.Id)", caption: caption, album: album))
         }
-        add(recentlyPlayedAlbums.first, "Da riprendere")
+        let last = lastListened
+        if let last {
+            let playing = currentlyPlayingItem?.Id == last.song.Id
+            add(last.album, "\(playing ? "In ascolto" : "Ultimo ascolto") · \(last.song.Name)", key: "last")
+        }
         add(favoriteAlbums.randomElementStable(seed: Self.dayOfYear), "Tra i tuoi preferiti")
         add(recentlyAddedAlbums.first, "Appena aggiunto")
-        if let artist = recentlyPlayedAlbums.first?.AlbumArtist {
+        if let artist = last?.album.AlbumArtist {
             add(albums.first { $0.AlbumArtist == artist && !used.contains($0.Id) }, "Altro di \(artist)")
         }
         let played = Set(recentlyPlayedAlbums.map(\.Id))

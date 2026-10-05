@@ -145,15 +145,25 @@ class JellyfinAPIService {
         return response.Items
     }
 
-    /// Marks an item as played for the current user, which updates its LastPlayedDate
-    /// on the server — this is what powers "recently played" queries (SortBy=DatePlayed).
-    func markItemPlayed(itemId: String) async throws {
-        guard let url = URL(string: "\(serverUrl)/Users/\(userId)/PlayedItems/\(itemId)") else {
+    /// Tells the server the user played an item, which sets its LastPlayedDate and play
+    /// count — what "recently played" (SortBy=DatePlayed) is built on. Reported as a
+    /// playback session that starts and stops: Jellyfin 12 answers 200 to
+    /// /Users/{id}/PlayedItems but leaves the date alone when the song was already played,
+    /// so songs heard again never moved up.
+    func reportPlayed(itemId: String) async throws {
+        try await postSession("/Sessions/Playing", body: ["ItemId": itemId, "PositionTicks": 0,
+                                                          "CanSeek": true, "PlayMethod": "DirectPlay"])
+        try await postSession("/Sessions/Playing/Stopped", body: ["ItemId": itemId, "PositionTicks": 0])
+    }
+
+    private func postSession(_ path: String, body: [String: Any]) async throws {
+        guard let url = URL(string: "\(serverUrl)\(path)") else {
             throw APIError.invalidURL
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         addAuthHeader(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
