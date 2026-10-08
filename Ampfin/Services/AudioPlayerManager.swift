@@ -29,6 +29,8 @@ final class AudioPlayerManager: ObservableObject {
     private var playerNode: AVAudioPlayerNode { eqManager.playerNode }
 
     private var currentAudioFile: AVAudioFile?
+    /// The typed link of the song opened before the current one (see typedLink).
+    private var previousTypedLink: URL?
     private var timeUpdateTimer: Timer?
     private var scheduledStartFrame: AVAudioFramePosition = 0
     private var seekOffset: TimeInterval = 0
@@ -233,7 +235,7 @@ final class AudioPlayerManager: ObservableObject {
     /// Opens the song's file and wires the engine for its format. Nothing plays here.
     private func openFile(at url: URL) -> Bool {
         do {
-            let audioFile = try AVAudioFile(forReading: url)
+            let audioFile = try openAudioFile(at: url)
             guard eqManager.reconnect(withFormat: audioFile.processingFormat) else {
                 print("Audio engine refused the format \(audioFile.processingFormat)")
                 return false
@@ -247,6 +249,80 @@ final class AudioPlayerManager: ObservableObject {
             print("Failed to open audio file: \(error)")
             return false
         }
+    }
+
+    /// Cache files are named without an extension (stream URLs have none), and
+    /// AVAudioFile can't always guess the type of a big MP3 from its content: such a
+    /// file is opened through a hard link named with its real extension.
+    private func openAudioFile(at url: URL) throws -> AVAudioFile {
+        let typedFirst = !Self.knownAudioExtensions.contains(url.pathExtension.lowercased())
+        var typedTried = false
+        if typedFirst, let typed = typedLink(for: url) {
+            typedTried = true
+            if let file = try? AVAudioFile(forReading: typed) { return file }
+            print("Typed link did not open, trying the original file")
+        }
+        do {
+            return try AVAudioFile(forReading: url)
+        } catch {
+            print("Plain open failed: \(error)")
+            guard !typedTried, let typed = typedLink(for: url) else { throw error }
+            print("Retrying through typed link")
+            return try AVAudioFile(forReading: typed)
+        }
+    }
+
+    private static let knownAudioExtensions: Set<String> = [
+        "mp3", "flac", "m4a", "mp4", "aac", "alac", "wav", "aiff", "aif", "caf", "ogg", "opus"
+    ]
+
+    /// A hard link next to the cache file (in AudioStreamCache/typed/) with the extension
+    /// of its detected type. Only the current and the previous link are kept.
+    private func typedLink(for url: URL) -> URL? {
+        guard let ext = Self.detectedAudioExtension(of: url) else { return nil }
+        let folder = url.deletingLastPathComponent().appendingPathComponent("typed", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let link = folder.appendingPathComponent("\(url.deletingPathExtension().lastPathComponent).\(ext)")
+        try? FileManager.default.removeItem(at: link)
+        do {
+            try FileManager.default.linkItem(at: url, to: link)
+        } catch {
+            print("Hard link failed (\(error)), copying")
+            do {
+                try FileManager.default.copyItem(at: url, to: link)
+            } catch {
+                print("Typed copy failed: \(error)")
+                return nil
+            }
+        }
+        let keep: Set<String> = [link.lastPathComponent, previousTypedLink?.lastPathComponent ?? ""]
+        for old in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        where !keep.contains(old.lastPathComponent) {
+            try? FileManager.default.removeItem(at: old)
+        }
+        previousTypedLink = link
+        return link
+    }
+
+    /// Reads the first 12 bytes to tell the audio type apart; nil if it's not recognised.
+    private static func detectedAudioExtension(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 12), data.count >= 4 else { return nil }
+        let b = [UInt8](data)
+        func text(_ range: Range<Int>) -> String? {
+            guard range.upperBound <= b.count else { return nil }
+            return String(bytes: b[range], encoding: .ascii)
+        }
+        if text(0..<3) == "ID3" { return "mp3" }
+        if b[0] == 0xFF, (b[1] & 0xE0) == 0xE0 { return "mp3" }
+        if text(0..<4) == "fLaC" { return "flac" }
+        if text(4..<8) == "ftyp" { return "m4a" }
+        if text(0..<4) == "RIFF", text(8..<12) == "WAVE" { return "wav" }
+        if text(0..<4) == "FORM", ["AIFF", "AIFC"].contains(text(8..<12) ?? "") { return "aiff" }
+        if text(0..<4) == "caff" { return "caf" }
+        if text(0..<4) == "OggS" { return "ogg" }
+        return nil
     }
 
     /// Queues the whole file on the player node. The node makes no sound until play() is

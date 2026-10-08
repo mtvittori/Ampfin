@@ -7,9 +7,17 @@
 
 import SwiftUI
 
+/// Whether the cover starts below the Dynamic Island (iOS), with the band above it
+/// colored like the cover's top edge. Default on, so the test is visible.
+enum HeroCoverSettings {
+    static let storageKey = "heroCoverBelowIsland"
+}
+
 /// The page color taken from the image, and the text color that reads on it.
 struct HeroPalette: Equatable {
     var background: Color
+    /// The color of the image's top rows: fills the band above the cover when it is moved down.
+    var topEdge: Color
     var isLight: Bool
     /// The color as numbers, for the widgets' snapshot.
     private(set) var rgb: [Double] = [0.14, 0.14, 0.14]
@@ -21,10 +29,12 @@ struct HeroPalette: Equatable {
 
     init(background: Color, isLight: Bool) {
         self.background = background
+        self.topEdge = background
         self.isLight = isLight
     }
 
-    /// Average of the image's bottom rows, so the fade has no visible seam.
+    /// Average of the image's bottom rows, so the fade has no visible seam; the top rows
+    /// give the band above a moved-down cover.
     init?(image: PlatformImage) {
         guard let cgImage = image.cgImage else { return nil }
         let size = 12
@@ -35,19 +45,25 @@ struct HeroPalette: Equatable {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
         let pixels = data.assumingMemoryBound(to: UInt8.self)
 
-        // The bitmap's first row is the top of the image: the last two are the bottom edge.
-        var r = 0.0, g = 0.0, b = 0.0
-        for row in (size - 2)..<size {
-            for column in 0..<size {
-                let i = (row * size + column) * 4
-                r += Double(pixels[i]); g += Double(pixels[i + 1]); b += Double(pixels[i + 2])
+        // The bitmap's first row is the top of the image: the first two rows are the top
+        // edge, the last two the bottom edge.
+        func average(_ rows: Range<Int>) -> (r: Double, g: Double, b: Double) {
+            var sum = (r: 0.0, g: 0.0, b: 0.0)
+            for row in rows {
+                for column in 0..<size {
+                    let i = (row * size + column) * 4
+                    sum.r += Double(pixels[i]); sum.g += Double(pixels[i + 1]); sum.b += Double(pixels[i + 2])
+                }
             }
+            let n = Double(rows.count * size) * 255
+            return (sum.r / n, sum.g / n, sum.b / n)
         }
-        let n = Double(2 * size) * 255
-        r /= n; g /= n; b /= n
-        background = Color(red: r, green: g, blue: b)
-        rgb = [r, g, b]
-        isLight = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.62
+        let bottom = average((size - 2)..<size)
+        let top = average(0..<2)
+        background = Color(red: bottom.r, green: bottom.g, blue: bottom.b)
+        topEdge = Color(red: top.r, green: top.g, blue: top.b)
+        rgb = [bottom.r, bottom.g, bottom.b]
+        isLight = 0.2126 * bottom.r + 0.7152 * bottom.g + 0.0722 * bottom.b > 0.62
     }
 }
 
@@ -62,15 +78,22 @@ struct HeroPage<Controls: View, Content: View>: View {
     @ViewBuilder let controls: (HeroPalette) -> Controls
     @ViewBuilder let content: (HeroPalette) -> Content
 
+    @AppStorage(HeroCoverSettings.storageKey) private var coverBelowIsland = false
     @State private var image: PlatformImage?
     @State private var palette = HeroPalette.neutral
 
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
+            // Read here, outside the ignoresSafeArea of the ScrollView.
+            #if os(iOS)
+            let islandInset = coverBelowIsland ? geo.safeAreaInsets.top : 0
+            #else
+            let islandInset: CGFloat = 0
+            #endif
             ScrollView {
                 VStack(spacing: 0) {
-                    header(width: width)
+                    header(width: width, islandInset: islandInset)
                     controls(palette)
                         .padding(.horizontal, 20)
                         .padding(.top, 14)
@@ -100,19 +123,34 @@ struct HeroPage<Controls: View, Content: View>: View {
         #endif
     }
 
-    private func header(width: CGFloat) -> some View {
+    private func header(width: CGFloat, islandInset: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
-            Group {
-                if let image {
-                    Image(platformImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .transition(.opacity)
-                } else {
-                    palette.background
+            VStack(spacing: 0) {
+                // Above the moved-down cover: the cover's top color, fading into the image.
+                if islandInset > 0 {
+                    palette.topEdge.frame(height: islandInset)
+                }
+                Group {
+                    if let image {
+                        Image(platformImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .transition(.opacity)
+                    } else {
+                        palette.background
+                    }
+                }
+                .frame(width: width, height: width)
+                .clipped()
+                .overlay(alignment: .top) {
+                    if islandInset > 0 {
+                        LinearGradient(colors: [palette.topEdge, palette.topEdge.opacity(0)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: 40)
+                    }
                 }
             }
-            .frame(width: width, height: width)
+            .frame(width: width, height: width + islandInset)
             .clipped()
             // Pulling down past the top stretches the image instead of showing a gap.
             .visualEffect { content, proxy in
@@ -159,7 +197,7 @@ struct HeroPage<Controls: View, Content: View>: View {
             .padding(.bottom, 4)
             .entrance(.rise, delay: 0.05)
         }
-        .frame(width: width, height: width)
+        .frame(width: width, height: width + islandInset)
     }
 }
 

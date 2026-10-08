@@ -14,6 +14,7 @@ extension Mix.Kind {
         case .rediscover: return .purple
         case .fresh: return .green
         case .discover: return .teal
+        case .gym: return .red
         case .genre: return .indigo
         }
     }
@@ -25,6 +26,7 @@ extension Mix.Kind {
         case .rediscover: return "clock.arrow.circlepath"
         case .fresh: return "sparkles"
         case .discover: return "safari.fill"
+        case .gym: return "dumbbell.fill"
         case .genre: return "guitars.fill"
         }
     }
@@ -224,6 +226,11 @@ struct MixDetailPage: View {
             onRemove: nil,
             cover: { CoverGrid(albumIds: mix.coverAlbumIds, size: 220) },
             menu: {
+                Button {
+                    MixStore.shared.saveToJellyfin(mix, viewModel: viewModel)
+                } label: {
+                    Label("Salva su Jellyfin", systemImage: "square.and.arrow.down.on.square")
+                }
                 Button {
                     let date = Date().formatted(.dateTime.day().month(.abbreviated))
                     MixStore.shared.createPlaylist(named: "\(mix.title) · \(date)", with: mix.tracks, viewModel: viewModel)

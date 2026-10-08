@@ -76,6 +76,12 @@ struct ContentView: View {
             .task(id: viewModel.currentlyPlayingItem.map { $0.AlbumId ?? $0.id }) {
                 await updateArtworkAccent()
             }
+            // The optional album-colored background (Settings > Aspetto).
+            .task(id: viewModel.currentlyPlayingItem.map { $0.AlbumId ?? $0.id }) {
+                guard let item = viewModel.currentlyPlayingItem else { return }
+                let albumId = item.AlbumId ?? item.id
+                await AlbumBackdrop.shared.show(albumId: albumId, url: viewModel.artworkURL(for: albumId, size: 300))
+            }
     }
 
     @State private var linkedAlbum: AlbumItem?
@@ -173,6 +179,7 @@ struct ContentView: View {
                     ZoomScope {
                         NavigationStack {
                             AppleHomeView()
+                                .albumColorBackground()
                                 .iOSToolbar(viewModel: viewModel,
                                             title: "Home",
                                             subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
@@ -185,6 +192,7 @@ struct ContentView: View {
                     ZoomScope {
                         NavigationStack {
                             TracksView()
+                                .albumColorBackground()
                                 .iOSToolbar(viewModel: viewModel, title: "Brani",
                                             subtitle: countLabel(viewModel.audioItems.count, one: "brano", many: "brani"))
                         }
@@ -196,6 +204,7 @@ struct ContentView: View {
                     ZoomScope {
                         NavigationStack(path: $albumsPath) {
                             AlbumsView()
+                                .albumColorBackground()
                                 .iOSToolbar(viewModel: viewModel, title: "Album",
                                             subtitle: countLabel(viewModel.albums.count, one: "album", many: "album"))
                         }
@@ -207,6 +216,7 @@ struct ContentView: View {
                     ZoomScope {
                         NavigationStack(path: $artistsPath) {
                             ArtistsView()
+                                .albumColorBackground()
                                 .iOSToolbar(viewModel: viewModel, title: "Artisti",
                                             subtitle: countLabel(viewModel.artists.count, one: "artista", many: "artisti"))
                         }
@@ -219,6 +229,7 @@ struct ContentView: View {
                     ZoomScope {
                         NavigationStack {
                             SearchResultsView(query: $viewModel.globalSearchQuery)
+                                .albumColorBackground()
                                 .environmentObject(viewModel)
                                 .searchable(text: $viewModel.globalSearchQuery, placement: .toolbar, prompt: "Cerca brani, album, artisti...")
                         }

@@ -8,7 +8,7 @@ import Foundation
 
 struct Mix: Identifiable {
     enum Kind: String {
-        case daily, rediscover, top, fresh, discover, genre
+        case daily, rediscover, top, fresh, discover, gym, genre
     }
 
     let id: String
@@ -36,6 +36,8 @@ enum MixEngine {
         let artistNames: [String: String]
         let userKey: String
         let day: String
+        /// Album id → the album's genres, for songs that carry none of their own.
+        var albumGenres: [String: [String]] = [:]
     }
 
     static let size = 25
@@ -48,6 +50,7 @@ enum MixEngine {
         if let mix = rediscover(input, scores) { result.append(mix) }
         if let mix = fresh(input, scores) { result.append(mix) }
         if let mix = discover(input, scores) { result.append(mix) }
+        if let mix = gym(input, scores) { result.append(mix) }
         result += genres(input, scores)
         return result
     }
@@ -190,6 +193,121 @@ enum MixEngine {
         return Mix(id: "discover", kind: .discover, title: "Da scoprire",
                    subtitle: "Mai ascoltate, nei generi che ascolti", tracks: Array(tracks))
     }
+
+    // MARK: - Gym
+
+    /// Genres that suit a workout; matched as substrings of the lowercased genre.
+    private static let gymGenres = [
+        // Not "alternative" alone: on this library it is mostly indie pop.
+        "rock", "punk", "post-hardcore", "hardcore", "metal", "djent", "grunge", "garage",
+        "hip hop", "hip-hop", "hiphop", "trap", "drill", "grime", "electronic", "edm", "dance",
+        "house", "techno", "drum and bass", "drum & bass", "dubstep", "trance", "big beat",
+        "industrial", "phonk", "reggaeton", "anime",
+    ]
+    /// Short names that would match inside other words ("emotional", "therapy"): whole words only.
+    private static let gymWords: Set<String> = ["rap", "emo", "dnb"]
+    /// Genres that rule a song out, even when an energetic one is listed too.
+    private static let notGymGenres = [
+        "ambient", "classical", "piano", "acoustic", "folk", "singer-songwriter", "singer/songwriter",
+        "jazz", "blues", "soul", "lo-fi", "lofi", "chill", "downtempo", "soundtrack", "new age",
+        "ballad", "bossa", "lullaby", "sleep", "meditation",
+        // Slow kinds of rock and pop, and "classical" in other languages (French tags here).
+        "post-rock", "post rock", "shoegaze", "dream pop", "slowcore", "indie pop", "indie folk",
+        "classique", "klassik", "clásica", "classica",
+    ]
+    private static let notGymWords: Set<String> = ["score", "ost"]
+
+    private static func isGymGenre(_ genres: [String]) -> Bool {
+        let lower = genres.map { $0.lowercased() }
+        func words(_ g: String) -> Set<String> {
+            Set(g.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        }
+        let blocked = lower.contains { g in
+            notGymGenres.contains { g.contains($0) } || !notGymWords.isDisjoint(with: words(g))
+        }
+        if blocked { return false }
+        return lower.contains { g in
+            gymGenres.contains { g.contains($0) } || !gymWords.isDisjoint(with: words(g))
+        }
+    }
+
+    /// About an hour of energetic songs: what the user plays most (favorites count double,
+    /// recent plays a bit more), with about one song in five new, from artists they like.
+    private static func gym(_ input: Input, _ scores: Scores) -> Mix? {
+        let eligible = input.library.filter { item in
+            guard let d = item.duration, d >= 90, d <= 480 else { return false }
+            let own = item.Genres ?? []
+            let genres = own.isEmpty ? (item.AlbumId.flatMap { input.albumGenres[$0] } ?? []) : own
+            return isGymGenre(genres)
+        }
+        guard eligible.count >= 15 else { return nil }
+
+        var rng = MixRandom(input.userKey, input.day, "gym")
+        func artist(_ item: AudioItem) -> String { input.artistNames[item.Id] ?? "" }
+
+        // The artists liked among the energetic songs.
+        var liked: [String: Double] = [:]
+        for item in eligible where !artist(item).isEmpty {
+            let favorite = input.favoriteTrackIds.contains(item.Id)
+            let score = (scores.track[item.Id] ?? 0) + (favorite ? 2 : 0)
+            if score > 0 { liked[artist(item), default: 0] += score }
+        }
+
+        // The history has the user's data for sure; the library's copy may lack it.
+        let history = Dictionary(input.history.map { ($0.Id, $0.UserData?.PlayCount ?? 0) },
+                                 uniquingKeysWith: { a, _ in a })
+        func playCount(_ item: AudioItem) -> Int { max(history[item.Id] ?? 0, item.UserData?.PlayCount ?? 0) }
+
+        let discoveryPool = eligible.filter {
+            playCount($0) <= 1 && !input.favoriteTrackIds.contains($0.Id) && (liked[artist($0)] ?? 0) > 0
+        }
+        let discoveryIds = Set(discoveryPool.map(\.Id))
+        let mainPool = eligible.filter { !discoveryIds.contains($0.Id) }
+
+        let discovery = weightedSample(discoveryPool, count: discoveryPool.count, weight: {
+            1 + min(liked[artist($0)] ?? 0, 10)
+        }, rng: &rng)
+        let main = weightedSample(mainPool, count: mainPool.count, weight: { item in
+            let favorite = input.favoriteTrackIds.contains(item.Id)
+            // Songs never played still get a small chance, so a young history fills the mix too.
+            let base = scores.played.contains(item.Id) ? 1 + min(scores.track[item.Id] ?? 0, 25) : 0.3
+            return favorite ? base * 2 : base
+        }, rng: &rng)
+
+        // 60 to 70 minutes, a different length each day.
+        let target = 3600 + Double.random(in: 0...600, using: &rng)
+        var picks: [AudioItem] = []
+        var perArtist: [String: Int] = [:]
+        var total = 0.0
+        var mainIndex = 0, discoveryIndex = 0
+        func take(_ item: AudioItem) -> Bool {
+            let name = artist(item)
+            if !name.isEmpty {
+                guard perArtist[name, default: 0] < 2 else { return false }
+                perArtist[name, default: 0] += 1
+            }
+            picks.append(item)
+            total += item.duration ?? 0
+            return true
+        }
+        while total < target, mainIndex < main.count || discoveryIndex < discovery.count {
+            let wantNew = Double.random(in: 0..<1, using: &rng) < 0.2
+            if (wantNew || mainIndex >= main.count), discoveryIndex < discovery.count {
+                _ = take(discovery[discoveryIndex])
+                discoveryIndex += 1
+            } else if mainIndex < main.count {
+                _ = take(main[mainIndex])
+                mainIndex += 1
+            }
+        }
+        guard picks.count >= 10 else { return nil }
+        let tracks = spaced(picks.shuffled(using: &rng), input.artistNames)
+        let minutes = Int((total / 60).rounded())
+        return Mix(id: "gym", kind: .gym, title: "Palestra",
+                   subtitle: "Brani carichi per allenarti · \(minutes) min", tracks: tracks)
+    }
+
+    // MARK: - Genres
 
     /// One mix for each of the two genres heard most.
     private static func genres(_ input: Input, _ scores: Scores) -> [Mix] {

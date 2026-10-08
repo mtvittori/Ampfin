@@ -34,6 +34,8 @@ final class MixStore: ObservableObject {
     /// The user and day the mixes were made for: they're made again for another of either.
     private var mixesKey: String?
     private var historyFetched: Date?
+    /// Mixes being saved to Jellyfin, so a double tap doesn't make two playlists.
+    private var savingMixIds: Set<String> = []
 
     /// Playlists made by people (the user's and those shared with them).
     var userPlaylists: [PlaylistItem] {
@@ -76,7 +78,9 @@ final class MixStore: ObservableObject {
             library: library, history: history,
             favoriteTrackIds: Set(viewModel.favoriteTracks.map(\.Id)),
             recentAlbumIds: viewModel.recentlyAddedAlbums.map(\.Id),
-            artistNames: artistNames, userKey: viewModel.currentUserId, day: day
+            artistNames: artistNames, userKey: viewModel.currentUserId, day: day,
+            albumGenres: Dictionary(viewModel.albums.compactMap { album in album.Genres.map { (album.Id, $0) } },
+                                    uniquingKeysWith: { first, _ in first })
         )
         // Thousands of songs: worked out away from the main thread.
         let made = await Task.detached(priority: .utility) { MixEngine.mixes(input) }.value
@@ -118,6 +122,48 @@ final class MixStore: ObservableObject {
                 await refreshPlaylists(viewModel: viewModel)
             } catch {
                 QueueFeedback.shared.show("Playlist non creata", systemImage: "exclamationmark.triangle")
+            }
+        }
+    }
+
+    /// Saves an Ampfin mix as a playlist named like the mix, so other Jellyfin apps see it.
+    /// The first time it's created; after that the same playlist (remembered by id, so a
+    /// playlist of the user's own with the same name is never touched) gets the new songs.
+    func saveToJellyfin(_ mix: Mix, viewModel: JellyfinViewModel) {
+        guard let api = viewModel.apiService, !mix.tracks.isEmpty, !savingMixIds.contains(mix.id) else { return }
+        savingMixIds.insert(mix.id)
+        let userId = viewModel.currentUserId
+        Task {
+            defer { savingMixIds.remove(mix.id) }
+            do {
+                await refreshPlaylists(viewModel: viewModel)
+                let key = "savedMixPlaylists.\(userId)"
+                var saved = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+                let ids = mix.tracks.map(\.Id)
+                if let id = saved[mix.id], playlists.contains(where: { $0.Id == id }) {
+                    // New songs first, then the old entries out: a failure never leaves it empty.
+                    let old = try await api.fetchPlaylistItems(playlistId: id).compactMap(\.PlaylistItemId)
+                    for chunk in ids.chunked(into: 50) {
+                        try await api.addToPlaylist(playlistId: id, itemIds: chunk)
+                    }
+                    for chunk in old.chunked(into: 50) {
+                        try await api.removeFromPlaylist(playlistId: id, entryIds: chunk)
+                    }
+                } else {
+                    let first = Array(ids.prefix(50))
+                    let id = try await api.createPlaylist(name: mix.title, itemIds: first)
+                    for chunk in ids.dropFirst(50).chunked(into: 50) where !id.isEmpty {
+                        try await api.addToPlaylist(playlistId: id, itemIds: chunk)
+                    }
+                    if !id.isEmpty {
+                        saved[mix.id] = id
+                        UserDefaults.standard.set(saved, forKey: key)
+                    }
+                }
+                QueueFeedback.shared.show("Playlist salvata su Jellyfin", systemImage: "music.note.list")
+                await refreshPlaylists(viewModel: viewModel)
+            } catch {
+                QueueFeedback.shared.show("Playlist non salvata", systemImage: "exclamationmark.triangle")
             }
         }
     }
@@ -197,5 +243,15 @@ struct NewPlaylistPrompt: ViewModifier {
             Text(count == 0 ? "Una playlist vuota su Jellyfin."
                  : count == 1 ? "Con il brano scelto." : "Con \(count) brani.")
         }
+    }
+}
+
+private extension Collection {
+    /// Pieces of at most `size` elements, to keep request URLs short.
+    func chunked(into size: Int) -> [[Element]] {
+        var rest = Array(self)
+        var pieces: [[Element]] = []
+        while !rest.isEmpty { pieces.append(Array(rest.prefix(size))); rest = Array(rest.dropFirst(size)) }
+        return pieces
     }
 }

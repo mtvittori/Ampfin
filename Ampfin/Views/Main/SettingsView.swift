@@ -11,12 +11,14 @@ struct SettingsView: View {
     @State private var songCacheSize: Int64 = 0
     @ObservedObject private var backup = SettingsBackup.shared
     @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
+    @AppStorage(AlbumBackdrop.storageKey) private var albumColorBackground = false
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
     @AppStorage(MixSource.topPicksKey) private var mixesInTopPicks = true
     @AppStorage(ScrobbleStatsStore.homeKey) private var showScrobbleStats = false
     @AppStorage(LetterIndexStyle.storageKey) private var letterIndexStyle = LetterIndexStyle.classic.rawValue
     @AppStorage(CoverFlowSettings.storageKey) private var landscapeCoverFlow = false
     @AppStorage(CoverFlowSettings.resumeKey) private var coverFlowResumesPlaying = true
+    @AppStorage(HeroCoverSettings.storageKey) private var heroCoverBelowIsland = false
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -66,6 +68,8 @@ struct SettingsView: View {
                     accentSection
                     glassSection
                     topBarSection
+                    albumBackgroundSection
+                    heroCoverSection
                     nowPlayingBackgroundSection
                 }
                 pageLink("Home", icon: "house.fill", color: .orange) {
@@ -226,6 +230,26 @@ struct SettingsView: View {
             Text("Barra in alto")
         } footer: {
             Text("Barra Ampfin: titolo grande e pulsanti più grandi in una barra propria, al posto di quella di sistema.")
+        }
+    }
+
+    @ViewBuilder private var albumBackgroundSection: some View {
+        Section {
+            Toggle("Sfondo dai colori dell'album", isOn: $albumColorBackground)
+        } header: {
+            Text("Sfondo")
+        } footer: {
+            Text("Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto.")
+        }
+    }
+
+    @ViewBuilder private var heroCoverSection: some View {
+        Section {
+            Toggle("Copertina sotto la Dynamic Island", isOn: $heroCoverBelowIsland)
+        } header: {
+            Text("Copertina")
+        } footer: {
+            Text("Sposta in basso la copertina delle pagine album e artista quanto basta per non finire sotto la Dynamic Island; lo spazio sopra prende il colore della copertina.")
         }
     }
 
