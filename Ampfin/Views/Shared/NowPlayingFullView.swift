@@ -226,7 +226,9 @@ struct NowPlayingFullView: View {
                 bottomRow
                     .padding(.horizontal, 44)
                     .padding(.top, 24)
-                    .padding(.bottom, sizeClass == .compact ? 10 : max(geo.safeAreaInsets.bottom, 34) + 4)
+                    // iPhone: just above the home indicator (icons ~42 pt from the edge, as in
+                    // Apple Music), but out of its swipe zone.
+                    .padding(.bottom, sizeClass == .compact ? max(geo.safeAreaInsets.bottom - 14, 10) : max(geo.safeAreaInsets.bottom, 34) + 4)
             }
         }
         .animation(.easeInOut(duration: 0.35), value: panel)
