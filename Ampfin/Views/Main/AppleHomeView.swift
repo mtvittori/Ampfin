@@ -72,6 +72,8 @@ struct AppleHomeView: View {
         // No scroll bar on the Home: it's a page to browse, not a list to search.
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
+                HomeGreetingRow()
+
                 if !topPickCards.isEmpty {
                     sectionTitle("Scelti per te")
                         .entrance(.rise)
@@ -320,6 +322,36 @@ struct AppleHomeView: View {
         .accessibilityAddTraits(.isHeader)
     }
 }
+
+#if os(iOS)
+/// The personal line under the Home's title, for the "Messaggio per te" style. Tap for the next one.
+/// Its own view, observing HomeGreeting, so a change redraws only this row.
+private struct HomeGreetingRow: View {
+    @ObservedObject private var greeting = HomeGreeting.shared
+    @AppStorage(HomeSubtitleStyle.storageKey) private var style = HomeSubtitleStyle.message.rawValue
+
+    var body: some View {
+        if style != HomeSubtitleStyle.date.rawValue {
+            Text(greeting.line)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .padding(.horizontal, 20)
+                .padding(.top, 3)
+                .contentTransition(.opacity)
+                .onTapGesture {
+                    withAnimation(.smooth) { greeting.next() }
+                }
+                .sensoryFeedback(.selection, trigger: greeting.line)
+                .accessibilityAddTraits(.isButton)
+                .entrance(.rise)
+        }
+    }
+}
+#endif
 
 /// Tall card: the cover fills it, and its bottom melts into the cover's own color
 /// with the title and artist on it.

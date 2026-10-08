@@ -1,7 +1,7 @@
 // HomeGreeting.swift
-// The line under "Home" in the top bar: a short, personal sentence about the user's music
-// (an album's anniversary, new albums to hear, the week's top artist, a mix that's ready…)
-// instead of the date. Built only from data the app has already loaded, never in a view body.
+// The personal line at the top of the Home, under its title: a short sentence about the user's
+// music (an album's anniversary, new albums to hear, the week's top artist, a mix that's ready…).
+// The navigation subtitle stays the date. Built only from data the app has already loaded.
 
 import SwiftUI
 
@@ -117,8 +117,9 @@ final class HomeGreeting: ObservableObject {
 
     // MARK: - Text
 
-    private static let fitsWithGreeting = 40
-    private static let maxLength = 48
+    /// The greeting and the fact share the line (the Home shows up to two lines).
+    private static let fitsWithGreeting = 70
+    private static let titleLength = 40
 
     private static func greeting(hour: Int) -> String {
         switch hour {
@@ -129,7 +130,7 @@ final class HomeGreeting: ObservableObject {
         }
     }
 
-    /// "Greeting · fact" when it fits a nav subtitle, otherwise the fact alone.
+    /// "Greeting · fact" when it fits in `fitsWithGreeting` characters, otherwise the fact alone.
     private static func compose(greeting: String, fact: String) -> String {
         let joined = "\(greeting) · \(fact)"
         if !fact.contains("·"), joined.count <= fitsWithGreeting { return joined }
@@ -160,7 +161,7 @@ final class HomeGreeting: ObservableObject {
         // The oldest first, at most three, so the line stays rare and special.
         return found.sorted { $0.years > $1.years }.prefix(3).map { item in
             let tail = item.years == 1 ? " compie 1 anno oggi" : " compie \(item.years) anni oggi"
-            return "«\(Self.clipped(item.name, to: Self.maxLength - tail.count - 2))»\(tail)"
+            return "«\(Self.clipped(item.name, to: Self.titleLength))»\(tail)"
         }
     }
 
@@ -173,7 +174,7 @@ final class HomeGreeting: ObservableObject {
         }
         switch fresh.count {
         case 0: return nil
-        case 1: return "Nuovo: «\(Self.clipped(fresh[0].Name, to: 30))»"
+        case 1: return "Nuovo: «\(Self.clipped(fresh[0].Name, to: Self.titleLength))»"
         default: return "\(fresh.count) album nuovi da ascoltare"
         }
     }
@@ -184,7 +185,7 @@ final class HomeGreeting: ObservableObject {
         var result: [String] = []
         if let top = store.summary(for: .week)?.topArtists.first, top.count >= 3 {
             let plays = "· \(top.count) ascolti"
-            result.append("Questa settimana: \(Self.clipped(top.name, to: Self.maxLength - plays.count - 19)) \(plays)")
+            result.append("Questa settimana: \(Self.clipped(top.name, to: Self.titleLength)) \(plays)")
         }
         if store.streakDays >= 2 {
             result.append("\(store.streakDays) giorni di fila con la musica")
@@ -224,21 +225,19 @@ final class HomeGreeting: ObservableObject {
               let artist = viewModel.artistName(for: first), !artist.isEmpty else { return nil }
         let same = latest.filter { viewModel.artistName(for: $0) == artist }.count
         guard same >= 3 else { return nil }
-        return "Ancora \(Self.clipped(artist, to: 36))?"
+        return "Ancora \(Self.clipped(artist, to: Self.titleLength))?"
     }
 }
 
 #if os(iOS)
-/// Puts the Home's toolbar on a view with the greeting (or the date) as subtitle, and keeps
-/// the greeting fresh: when the Home appears, every hour, and when its inputs change.
+/// Puts the Home's toolbar on a view with the date as subtitle, and keeps the greeting
+/// fresh: when the Home appears, every hour, and when its inputs change.
+/// The greeting itself is the first row of AppleHomeView.
 private struct HomeToolbarModifier: ViewModifier {
     @ObservedObject var viewModel: JellyfinViewModel
     @ObservedObject private var greeting = HomeGreeting.shared
     @ObservedObject private var stats = ScrobbleStatsStore.shared
     @ObservedObject private var mixStore = MixStore.shared
-    @AppStorage(HomeSubtitleStyle.storageKey) private var style = HomeSubtitleStyle.message.rawValue
-
-    private var showsMessage: Bool { style != HomeSubtitleStyle.date.rawValue }
 
     private var inputs: String {
         "\(viewModel.albums.count)|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(stats.todayCount)|\(mixStore.mixes.count)"
@@ -246,9 +245,7 @@ private struct HomeToolbarModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .iOSToolbar(viewModel: viewModel, title: "Home",
-                        subtitle: showsMessage ? greeting.line : greeting.dateLine,
-                        onSubtitleTap: showsMessage ? { greeting.next() } : nil)
+            .iOSToolbar(viewModel: viewModel, title: "Home", subtitle: greeting.dateLine)
             .task(id: inputs) { greeting.refresh(viewModel: viewModel) }
             // Wakes at every full hour; leaving the Home cancels the sleep.
             .task {
