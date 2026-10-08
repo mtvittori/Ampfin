@@ -151,8 +151,9 @@ struct AlbumsView: View {
             .hidesMiniPlayerOnScroll()
             #endif
             .refreshable {
-                await viewModel.fetchAllLibraryData()
+                await LibraryRefresh.shared.run { await viewModel.fetchAllLibraryData() }
             }
+            .libraryRefreshBanner()
             .letterScrubber(letters: letterTargets.map(\.letter)) { letter in
                 if let target = letterTargets.first(where: { $0.letter == letter }) {
                     proxy.scrollTo(target.albumId, anchor: .top)

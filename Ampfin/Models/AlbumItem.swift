@@ -8,20 +8,28 @@ struct AlbumItem: Codable, Identifiable, Hashable {
     let ProductionYear: Int?
     let Genres: [String]?
 
-    // Jellyfin returns DateAdded as ISO8601 string. Keep raw string and expose a parsed Date.
+    // Old name, never sent by Jellyfin: kept so library caches written before still decode.
     let DateAdded: String?
+    /// When the album was added to the library ("DateCreated" in Jellyfin; needs
+    /// `Fields=DateCreated` in the request).
+    var DateCreated: String?
+    /// Sorting 1.000 albums by this parses each date many times: the formatter is shared,
+    /// and the fraction (Jellyfin sends 7 digits) is dropped, as the formatter wants 3 or none.
     var dateAddedDate: Date? {
-        guard let DateAdded = DateAdded else { return nil }
-        // Use ISO8601DateFormatter which is what Jellyfin normally returns
-        let formatter = ISO8601DateFormatter()
-        // Ensure fractional seconds are supported
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: DateAdded) { return date }
-        // Try without fractional seconds as a fallback
-        let fallback = ISO8601DateFormatter()
-        fallback.formatOptions = [.withInternetDateTime]
-        return fallback.date(from: DateAdded)
+        guard let raw = DateCreated ?? DateAdded else { return nil }
+        var text = raw
+        if let dot = text.firstIndex(of: ".") {
+            let rest = text[dot...].drop(while: { $0 == "." || $0.isNumber })
+            text = String(text[..<dot]) + rest
+        }
+        if !text.hasSuffix("Z"), !text.contains("+") { text += "Z" }
+        return Self.dateParser.date(from: text)
     }
+    private static let dateParser: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 
     // Necessario per usare AlbumItem con NavigationLink(value: ...)
     func hash(into hasher: inout Hasher) {

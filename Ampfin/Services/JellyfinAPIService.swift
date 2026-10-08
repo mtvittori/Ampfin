@@ -193,12 +193,12 @@ class JellyfinAPIService {
         }
     }
 
-    /// Fetches recently added albums (ordered by DateAdded descending).
+    /// Fetches recently added albums (ordered by DateCreated descending).
     /// Named as requested: fetchRecentAddedAlbums()
     func fetchRecentAddedAlbums() async throws -> [AlbumItem] {
         let libraryId = try await fetchMusicLibraryId()
-        // Use DateAdded to reflect actual time the item was added to the library
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&SortBy=DateAdded&SortOrder=Descending&Limit=20"
+        // DateCreated is Jellyfin's "date added" sort; DateAdded is not a valid SortBy value
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated&SortBy=DateCreated,SortName&SortOrder=Descending&Limit=20"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -219,8 +219,8 @@ class JellyfinAPIService {
     }
     
     func fetchAlbums(from libraryId: String) async throws -> [AlbumItem] {
-        // Modificato: ordina per DateAdded in ordine discendente così gli album saranno mostrati per data di aggiunta
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists&SortBy=DateAdded&SortOrder=Descending"
+        // Newest first by DateCreated (Jellyfin's "date added"); DateAdded is not a valid SortBy value
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated&SortBy=DateCreated,SortName&SortOrder=Descending"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }

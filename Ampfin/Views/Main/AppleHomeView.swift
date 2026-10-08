@@ -21,6 +21,7 @@ enum TopBarStyle: String, CaseIterable, Identifiable {
 
 struct AppleHomeView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Worked out when the library or the history changes, not at every redraw
     /// (it shuffles the whole album list).
@@ -140,11 +141,14 @@ struct AppleHomeView: View {
         .scrollPosition($testScroll)
         #endif
         .refreshable {
-            await viewModel.fetchAllLibraryData()
-            if showScrobbleStats {
-                await ScrobbleStatsStore.shared.load(using: viewModel, force: true)
+            await LibraryRefresh.shared.run {
+                await viewModel.fetchAllLibraryData()
+                if showScrobbleStats {
+                    await ScrobbleStatsStore.shared.load(using: viewModel, force: true)
+                }
             }
         }
+        .libraryRefreshBanner()
         .task(id: "\(viewModel.albums.count)|\(viewModel.currentlyPlayingItem?.Id ?? "")|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
             topPicks = viewModel.homePicks()
         }
@@ -152,6 +156,11 @@ struct AppleHomeView: View {
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()
             await viewModel.fetchRecentlyAddedAlbumsIfNeeded()
             await viewModel.fetchRecentlyPlayedTracksIfNeeded()
+        }
+        // Coming back to the app: new albums may have been added while it was away (TTL applies)
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await viewModel.fetchRecentlyAddedAlbumsIfNeeded() }
         }
         // Playlists, and the mixes made again for a new day, user or library.
         .task(id: "\(viewModel.audioItems.count)|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")") {

@@ -68,8 +68,9 @@ struct ArtistsView: View {
     private var artistsContent: some View {
         artistList
         .refreshable {
-            await viewModel.fetchAllLibraryData()
+            await LibraryRefresh.shared.run { await viewModel.fetchAllLibraryData() }
         }
+        .libraryRefreshBanner()
         .navigationDestination(for: ArtistItem.self) { artist in
             ArtistAlbumsView(artist: artist)
         }

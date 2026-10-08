@@ -106,8 +106,9 @@ struct TracksView: View {
             .hidesMiniPlayerOnScroll()
             #endif
             .refreshable {
-                await viewModel.fetchAllLibraryData()
+                await LibraryRefresh.shared.run { await viewModel.fetchAllLibraryData() }
             }
+            .libraryRefreshBanner()
         }
         .navigationTitle("Brani")
         .task(id: sectionsKey) { rebuildSections() }

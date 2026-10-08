@@ -585,14 +585,10 @@ class JellyfinViewModel: ObservableObject {
             let (fetchedTracks, fetchedAlbums, fetchedArtists) = try await (tracks, albums, artists)
             
             self.audioItems = fetchedTracks
-            self.albums = fetchedAlbums.sorted { a, b in
-                let aDate = a.dateAddedDate ?? Date.distantPast
-                let bDate = b.dateAddedDate ?? Date.distantPast
-                return aDate > bDate
-            }
+            self.albums = Self.newestFirst(fetchedAlbums)
             self.rawArtists = fetchedArtists
             self.allAvailableGenres = Array(Set(fetchedTracks.compactMap { $0.Genres }.flatMap { $0 })).sorted()
-            
+
             // Persist to disk cache
             LibraryCacheService.shared.saveLibrary(
                 tracks: self.audioItems,
@@ -601,7 +597,9 @@ class JellyfinViewModel: ObservableObject {
                 genres: self.allAvailableGenres
             )
             self.lastLibrarySyncDate = Date()
-            
+
+            // Keep "Aggiunti di recente" in step with the library sync
+            await fetchRecentlyAddedAlbumsIfNeeded(force: true)
         } catch {
             print("[Library] Fetch failed: \(error)")
             self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "Errore nel caricamento della libreria."
@@ -643,15 +641,25 @@ class JellyfinViewModel: ObservableObject {
             return false
         }
         self.audioItems = cached.tracks
-        self.albums = cached.albums.sorted { a, b in
-            let aDate = a.dateAddedDate ?? Date.distantPast
-            let bDate = b.dateAddedDate ?? Date.distantPast
-            return aDate > bDate
-        }
+        self.albums = Self.newestFirst(cached.albums)
         self.rawArtists = cached.artists
         self.allAvailableGenres = cached.genres
-        self.lastLibrarySyncDate = cached.lastSyncDate
+        // A cache written before the albums carried their date: sync again (the stale check
+        // sees no sync date), or "Aggiunti di recente" keeps the old order.
+        let hasDates = cached.albums.contains { $0.DateCreated != nil }
+        self.lastLibrarySyncDate = hasDates || cached.albums.isEmpty ? cached.lastSyncDate : nil
         return true
+    }
+
+    /// Newest album first. Stable: albums with the same (or no) date keep the server's
+    /// order — Swift's sort isn't, and with no dates at all it shuffled the list.
+    private static func newestFirst(_ albums: [AlbumItem]) -> [AlbumItem] {
+        let dated: [(offset: Int, date: Date)] = albums.indices.map { ($0, albums[$0].dateAddedDate ?? .distantPast) }
+        let order = dated.sorted { a, b in
+            if a.date != b.date { return a.date > b.date }
+            return a.offset < b.offset
+        }
+        return order.map { albums[$0.offset] }
     }
 
     /// Returns true if the library cache has expired based on the user's refresh interval.
