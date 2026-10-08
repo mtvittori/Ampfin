@@ -181,43 +181,48 @@ struct SearchResultsView: View {
     }
 
     private func trackRow(_ track: AudioItem, allTracks: [AudioItem]) -> some View {
-        HStack(spacing: 12) {
-            CachedAsyncImage(
-                url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 80),
-                content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                placeholder: {
-                    Rectangle().fill(.quaternary)
-                        .overlay(Image(systemName: "music.note").font(.caption2))
-                }
-            )
-            .frame(width: 40, height: 40)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track.Name)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                Text(viewModel.artistName(for: track) ?? "")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if viewModel.currentlyPlayingItem?.id == track.id {
-                Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
-                    .foregroundColor(.accentColor)
-                    .font(.caption)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
+        // A Button instead of onTapGesture: the tap no longer competes with the context menu's long press.
+        Button {
             viewModel.playerManager.play(item: track, in: allTracks)
+        } label: {
+            HStack(spacing: 12) {
+                CachedAsyncImage(
+                    url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 80),
+                    content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                    placeholder: {
+                        Rectangle().fill(.quaternary)
+                            .overlay(Image(systemName: "music.note").font(.caption2))
+                    }
+                )
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.Name)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Text(viewModel.artistName(for: track) ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if viewModel.currentlyPlayingItem?.id == track.id {
+                    Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
+                        .foregroundColor(.accentColor)
+                        .font(.caption)
+                }
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .queueSwipeActions(track, viewModel: viewModel)
         .contextMenu {
             QueueMenuItems(tracks: [track])
+            Divider()
+            TrackNavigationMenuItems(track: track)
         }
     }
 }

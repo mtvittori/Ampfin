@@ -145,15 +145,37 @@ class JellyfinAPIService {
         return response.Items
     }
 
-    /// Tells the server the user played an item, which sets its LastPlayedDate and play
-    /// count — what "recently played" (SortBy=DatePlayed) is built on. Reported as a
-    /// playback session that starts and stops: Jellyfin 12 answers 200 to
-    /// /Users/{id}/PlayedItems but leaves the date alone when the song was already played,
-    /// so songs heard again never moved up.
-    func reportPlayed(itemId: String) async throws {
-        try await postSession("/Sessions/Playing", body: ["ItemId": itemId, "PositionTicks": 0,
-                                                          "CanSeek": true, "PlayMethod": "DirectPlay"])
-        try await postSession("/Sessions/Playing/Stopped", body: ["ItemId": itemId, "PositionTicks": 0])
+    // MARK: - Playback reporting
+
+    /// A listen as the official apps report it: start, progress every few seconds, stop
+    /// with the real position. The start sets LastPlayedDate and adds one to the play count
+    /// (what "recently played" and the mixes are built on); the whole session is what the
+    /// Playback Reporting plugin records and what scrobbling plugins send on.
+    /// (Jellyfin 12 answers 200 to /Users/{id}/PlayedItems but leaves the date alone when
+    /// the song was already played, so that endpoint isn't used.)
+    func reportPlaybackStart(itemId: String, sessionId: String, position: TimeInterval) async throws {
+        try await postSession("/Sessions/Playing", body: [
+            "ItemId": itemId, "PlaySessionId": sessionId, "PositionTicks": Self.ticks(position),
+            "CanSeek": true, "IsPaused": false, "PlayMethod": "DirectPlay",
+        ])
+    }
+
+    func reportPlaybackProgress(itemId: String, sessionId: String, position: TimeInterval, isPaused: Bool) async throws {
+        try await postSession("/Sessions/Playing/Progress", body: [
+            "ItemId": itemId, "PlaySessionId": sessionId, "PositionTicks": Self.ticks(position),
+            "CanSeek": true, "IsPaused": isPaused, "PlayMethod": "DirectPlay",
+            "EventName": isPaused ? "Pause" : "TimeUpdate",
+        ])
+    }
+
+    func reportPlaybackStopped(itemId: String, sessionId: String, position: TimeInterval) async throws {
+        try await postSession("/Sessions/Playing/Stopped", body: [
+            "ItemId": itemId, "PlaySessionId": sessionId, "PositionTicks": Self.ticks(position),
+        ])
+    }
+
+    private static func ticks(_ seconds: TimeInterval) -> Int64 {
+        Int64(max(0, seconds) * 10_000_000)
     }
 
     private func postSession(_ path: String, body: [String: Any]) async throws {
@@ -218,22 +240,119 @@ class JellyfinAPIService {
     // MARK: - Playlists API (nuovi metodi)
     /// Recupera le playlist dell'utente
     func fetchUserPlaylists() async throws -> [PlaylistItem] {
-        // Endpoint: chiediamo Items con IncludeItemTypes=Playlist; Jellyfin ritorna le playlist come Items
-        let endpoint = "/Users/\(userId)/Items?IncludeItemTypes=Playlist&Recursive=true&SortBy=Name"
+        // Path tells the playlists made in Jellyfin from the .m3u files found in album folders.
+        let endpoint = "/Users/\(userId)/Items?IncludeItemTypes=Playlist&Recursive=true&SortBy=SortName&Fields=Path,ChildCount,DateCreated"
         let response: PlaylistResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
 
-    /// Recupera gli elementi di una playlist specifica
-    /// Nota: l'endpoint /Playlists/{id}/Items ritorna gli items della playlist
+    /// The songs of a playlist, in its order, with each entry's id (to remove it).
     func fetchPlaylistItems(playlistId: String) async throws -> [AudioItem] {
-        let endpoint = "/Playlists/\(playlistId)/Items"
+        let endpoint = "/Playlists/\(playlistId)/Items?UserId=\(userId)&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
-    
+
+    /// Creates a playlist of songs for the current user; returns its id.
+    @discardableResult
+    func createPlaylist(name: String, itemIds: [String]) async throws -> String {
+        guard let url = URL(string: "\(serverUrl)/Playlists") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "Name": name, "Ids": itemIds, "UserId": userId, "MediaType": "Audio",
+        ])
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return json?["Id"] as? String ?? ""
+    }
+
+    func addToPlaylist(playlistId: String, itemIds: [String]) async throws {
+        let ids = itemIds.joined(separator: ",")
+        try await send("POST", path: "/Playlists/\(playlistId)/Items?ids=\(ids)&userId=\(userId)")
+    }
+
+    /// Takes entries (PlaylistItemId, not the song id) out of a playlist.
+    func removeFromPlaylist(playlistId: String, entryIds: [String]) async throws {
+        let ids = entryIds.joined(separator: ",")
+        try await send("DELETE", path: "/Playlists/\(playlistId)/Items?entryIds=\(ids)")
+    }
+
+    func deletePlaylist(playlistId: String) async throws {
+        try await send("DELETE", path: "/Items/\(playlistId)")
+    }
+
+    private func send(_ method: String, path: String) async throws {
+        guard let url = URL(string: "\(serverUrl)\(path)") else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        addAuthHeader(to: &request)
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+
+    // MARK: - Listening history
+
+    /// The songs this user has played, most recent first, with play count and last date:
+    /// what the mixes are worked out from. Each user gets their own.
+    func fetchListeningHistory(limit: Int = 2000) async throws -> [AudioItem] {
+        let libraryId = try await fetchMusicLibraryId()
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=\(limit)&EnableUserData=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+        let response: AudioResponse = try await fetch(endpoint: endpoint)
+        return response.Items
+    }
+
+    // MARK: - Scrobbling statistics
+
+    /// Runs a query on the Playback Reporting plugin's database and returns the rows as text.
+    /// Throws APIError.invalidResponse with the status when the plugin isn't installed.
+    func playbackReportingRows(sql: String) async throws -> [[String]] {
+        guard let url = URL(string: "\(serverUrl)/user_usage_stats/submit_custom_query") else {
+            throw APIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "CustomQueryString": sql, "ReplaceUserId": false,
+        ])
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        // The plugin answers "colums" (sic) and "results"; values come as strings.
+        return try await Task.detached(priority: .userInitiated) {
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rows = json["results"] as? [[Any]] else {
+                throw APIError.decodingError(URLError(.cannotParseResponse))
+            }
+            return rows.map { row in row.map { cell in cell is NSNull ? "" : "\(cell)" } }
+        }.value
+    }
+
+    /// Songs by id, in chunks, with what the statistics need (artist tags and album).
+    func fetchItems(ids: [String]) async throws -> [AudioItem] {
+        var items: [AudioItem] = []
+        var start = 0
+        while start < ids.count {
+            let chunk = ids[start..<min(start + 100, ids.count)].joined(separator: ",")
+            let endpoint = "/Users/\(userId)/Items?Ids=\(chunk)&Fields=AlbumArtists,Artists,AlbumId"
+            let response: AudioResponse = try await fetch(endpoint: endpoint)
+            items += response.Items
+            start += 100
+        }
+        return items
+    }
+
     // MARK: - URL Helpers
-    
+
     func artworkURL(for itemId: String, size: Int = 200) -> URL? {
         // `tag` changes when the cover is changed from here, so caches keyed by URL load the new one.
         let tag = CoverRevisions.tag(for: itemId)

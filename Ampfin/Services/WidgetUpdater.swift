@@ -105,15 +105,31 @@ final class WidgetUpdater {
     /// it had to be loaded now, or when `readBack` asks for an already saved one.
     private func saveCover(for id: String, readBack: Bool, viewModel vm: JellyfinViewModel) async -> PlatformImage? {
         guard let file = WidgetStore.artURL(for: id), let directory = WidgetStore.artDirectory else { return nil }
-        if FileManager.default.fileExists(atPath: file.path) {
+        if FileManager.default.fileExists(atPath: file.path), !isStale(file, id: id) {
             return readBack ? (try? Data(contentsOf: file)).flatMap(PlatformImage.init(data:)) : nil
         }
         guard let url = vm.artworkURL(for: id, size: 300),
               let image = await ImageLoader.shared.firstImage(from: [url]) else { return nil }
         let data = await Task.detached(priority: .utility) { Self.jpeg(image) }.value
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if let data { try? data.write(to: file, options: .atomic) }
+        if let data {
+            try? data.write(to: file, options: .atomic)
+            savedRevisions[id] = CoverRevisions.tag(for: id)
+            UserDefaults.standard.set(savedRevisions, forKey: Self.revisionsKey)
+        }
         return image
+    }
+
+    private static let revisionsKey = "widgetArtRevisions"
+    private lazy var savedRevisions = UserDefaults.standard.dictionary(forKey: Self.revisionsKey) as? [String: String] ?? [:]
+
+    /// A saved cover is redone when it was changed in the app since, or after a few days
+    /// (covers replaced on the server): it used to stay the first one saved forever.
+    private func isStale(_ file: URL, id: String) -> Bool {
+        if savedRevisions[id] != nil, savedRevisions[id] != CoverRevisions.tag(for: id) { return true }
+        if savedRevisions[id] == nil, !CoverRevisions.tag(for: id).isEmpty { return true }
+        let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        return Date().timeIntervalSince(modified) > 3 * 24 * 3600
     }
 
     private nonisolated static func jpeg(_ image: PlatformImage) -> Data? {

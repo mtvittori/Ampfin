@@ -25,6 +25,27 @@ struct AppleHomeView: View {
     /// Worked out when the library or the history changes, not at every redraw
     /// (it shuffles the whole album list).
     @State private var topPicks: [HomePick] = []
+    @ObservedObject private var mixStore = MixStore.shared
+    @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
+    /// Settings → Mix in Home: mixes as big cards among the top picks, as Apple Music does.
+    @AppStorage(MixSource.topPicksKey) private var mixesInTopPicks = true
+    /// Settings → Statistiche d'ascolto in Home: the scrobbling section, off by default.
+    @AppStorage(ScrobbleStatsStore.homeKey) private var showScrobbleStats = false
+
+    /// The top picks with up to two of Ampfin's mixes among the albums: the day's mix
+    /// second, the new music (or discoveries) fourth.
+    private var topPickCards: [TopPickCard] {
+        var cards = topPicks.map(TopPickCard.album)
+        guard mixesInTopPicks, mixSource == MixSource.ampfin.rawValue else { return cards }
+        let mixes = mixStore.mixes
+        if let daily = mixes.first(where: { $0.kind == .daily }) {
+            cards.insert(.mix(daily, caption: "Aggiornato oggi"), at: min(1, cards.count))
+        }
+        if let made = mixes.first(where: { $0.kind == .fresh }) ?? mixes.first(where: { $0.kind == .discover }) {
+            cards.insert(.mix(made, caption: "Fatto per te"), at: min(3, cards.count))
+        }
+        return cards
+    }
 
     private var recentAlbums: [AlbumItem] {
         viewModel.recentlyPlayedAlbums.isEmpty ? Array(viewModel.albums.prefix(12)) : Array(viewModel.recentlyPlayedAlbums.prefix(12))
@@ -47,20 +68,26 @@ struct AppleHomeView: View {
 
     #if os(iOS)
     private var phoneBody: some View {
-        ScrollView {
+        // No scroll bar on the Home: it's a page to browse, not a list to search.
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                if !topPicks.isEmpty {
+                if !topPickCards.isEmpty {
                     sectionTitle("Scelti per te")
                         .entrance(.rise)
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .top, spacing: 12) {
-                            ForEach(topPicks) { pick in
+                            ForEach(topPickCards) { card in
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(pick.caption)
+                                    Text(card.caption)
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
-                                    PickCard(album: pick.album, zoomID: "pick-\(pick.id)")
+                                    switch card {
+                                    case .album(let pick):
+                                        PickCard(album: pick.album, zoomID: "pick-\(pick.id)")
+                                    case .mix(let mix, _):
+                                        MixPickCard(mix: mix)
+                                    }
                                 }
                                 .frame(width: 250)
                                 .coverFlow()
@@ -72,15 +99,26 @@ struct AppleHomeView: View {
                     .entrance(.rise, delay: 0.06)
                 }
 
+                mixesSection
+                    .entrance(.rise, delay: 0.09)
+
                 sectionLink("Ascoltati di recente", albums: recentAlbums)
                     .entrance(.rise, delay: 0.12)
                 AlbumStrip(albums: recentAlbums, group: "recent")
                     .entrance(.rise, delay: 0.16)
 
+                if showScrobbleStats {
+                    ScrobbleHomeSection()
+                        .id("scrobble-stats")
+                        .entrance(.rise, delay: 0.18)
+                }
+
                 if !viewModel.recentlyAddedAlbums.isEmpty {
                     sectionLink("Aggiunti di recente", albums: viewModel.recentlyAddedAlbums)
                     AlbumStrip(albums: Array(viewModel.recentlyAddedAlbums.prefix(12)), group: "added")
                 }
+
+                playlistsSection
 
                 if !viewModel.favoriteAlbums.isEmpty {
                     sectionLink("I tuoi preferiti", albums: viewModel.favoriteAlbums)
@@ -98,8 +136,14 @@ struct AppleHomeView: View {
         #if os(iOS)
         .hidesMiniPlayerOnScroll()
         #endif
+        #if DEBUG
+        .scrollPosition($testScroll)
+        #endif
         .refreshable {
             await viewModel.fetchAllLibraryData()
+            if showScrobbleStats {
+                await ScrobbleStatsStore.shared.load(using: viewModel, force: true)
+            }
         }
         .task(id: "\(viewModel.albums.count)|\(viewModel.currentlyPlayingItem?.Id ?? "")|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
             topPicks = viewModel.homePicks()
@@ -108,6 +152,131 @@ struct AppleHomeView: View {
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()
             await viewModel.fetchRecentlyAddedAlbumsIfNeeded()
             await viewModel.fetchRecentlyPlayedTracksIfNeeded()
+        }
+        // Playlists, and the mixes made again for a new day, user or library.
+        .task(id: "\(viewModel.audioItems.count)|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")") {
+            await mixStore.refreshPlaylists(viewModel: viewModel)
+            await mixStore.refreshMixes(viewModel: viewModel)
+        }
+        // Listening statistics are fetched only when the section is on.
+        .task(id: showScrobbleStats) {
+            guard showScrobbleStats else { return }
+            await ScrobbleStatsStore.shared.load(using: viewModel)
+            #if DEBUG
+            // `-provaHomeStatistiche YES` scrolls to the section, to photograph it from the Mac.
+            if UserDefaults.standard.bool(forKey: "provaHomeStatistiche") {
+                try? await Task.sleep(for: .seconds(1))
+                withAnimation { testScroll.scrollTo(id: "scrobble-stats", anchor: .top) }
+            }
+            #endif
+        }
+    }
+
+    #if DEBUG
+    @State private var testScroll = ScrollPosition(idType: String.self)
+    #endif
+
+    /// "Mix per te": Ampfin's own mixes, or the server plugins' playlists (Settings).
+    @ViewBuilder
+    private var mixesSection: some View {
+        if mixSource == MixSource.jellyfin.rawValue {
+            if !mixStore.serverMixes.isEmpty {
+                sectionTitle("Mix per te")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(mixStore.serverMixes) { playlist in
+                            NavigationLink {
+                                PlaylistDetailPage(playlist: playlist)
+                            } label: {
+                                PlaylistTile(playlist: playlist)
+                            }
+                            .buttonStyle(.pressable)
+                            .coverFlow()
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollClipDisabled()
+            }
+        } else if !mixStore.mixes.isEmpty {
+            sectionTitle("Mix per te")
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 12) {
+                    ForEach(mixStore.mixes) { mix in
+                        NavigationLink {
+                            MixDetailPage(mix: mix)
+                        } label: {
+                            MixCard(mix: mix)
+                        }
+                        .buttonStyle(.pressable)
+                        .contextMenu {
+                            Button {
+                                viewModel.playerManager.playAlbumShuffled(tracks: mix.tracks)
+                            } label: {
+                                Label("Riproduci in ordine casuale", systemImage: "shuffle")
+                            }
+                            QueueMenuItems(tracks: mix.tracks)
+                            AddToPlaylistMenu(tracks: mix.tracks)
+                        }
+                        .coverFlow()
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
+    /// "Le tue playlist ›", and a strip of them.
+    private var playlistsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            NavigationLink {
+                PlaylistsPage()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Le tue playlist")
+                        .font(.title2.weight(.bold))
+                    Image(systemName: "chevron.right")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 8)
+            }
+            .buttonStyle(.plain)
+
+            if mixStore.userPlaylists.isEmpty {
+                Button {
+                    mixStore.pendingNewPlaylist = []
+                } label: {
+                    Label("Nuova playlist", systemImage: "plus")
+                        .font(.body.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .padding(.horizontal, 20)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(mixStore.userPlaylists) { playlist in
+                            NavigationLink {
+                                PlaylistDetailPage(playlist: playlist)
+                            } label: {
+                                PlaylistTile(playlist: playlist)
+                            }
+                            .buttonStyle(.pressable)
+                            .coverFlow()
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollClipDisabled()
+            }
         }
     }
     #endif
@@ -319,6 +488,90 @@ struct HomePick: Identifiable {
     let id: String
     let caption: String
     let album: AlbumItem
+}
+
+/// A card of "Scelti per te": an album, or one of Ampfin's mixes.
+enum TopPickCard: Identifiable {
+    case album(HomePick)
+    case mix(Mix, caption: String)
+
+    var id: String {
+        switch self {
+        case .album(let pick): return pick.id
+        case .mix(let mix, _): return "mix-\(mix.id)"
+        }
+    }
+
+    var caption: String {
+        switch self {
+        case .album(let pick): return pick.caption
+        case .mix(_, let caption): return caption
+        }
+    }
+}
+
+/// A mix as a top pick, the size of the album cards: its four covers on top, the bottom
+/// in the first cover's color, title and the artists inside.
+private struct MixPickCard: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let mix: Mix
+
+    @State private var palette = HeroPalette.neutral
+
+    var body: some View {
+        NavigationLink {
+            MixDetailPage(mix: mix)
+        } label: {
+            ZStack(alignment: .bottom) {
+                palette.background
+
+                CoverGrid(albumIds: mix.coverAlbumIds, size: 250)
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                LinearGradient(stops: [.init(color: palette.background.opacity(0), location: 0),
+                                       .init(color: palette.background, location: 0.45)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 150)
+
+                VStack(spacing: 2) {
+                    Label(mix.title, systemImage: mix.kind.systemImage)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(mix.subtitle)
+                        .font(.subheadline)
+                        .opacity(0.8)
+                        .lineLimit(1)
+                    Text("\(mix.tracks.count) brani")
+                        .font(.caption)
+                        .opacity(0.7)
+                }
+                .foregroundStyle(palette.foreground)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
+            }
+            .frame(width: 250, height: 330)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.pressable)
+        .contextMenu {
+            Button {
+                viewModel.playerManager.playAlbumShuffled(tracks: mix.tracks)
+            } label: {
+                Label("Riproduci in ordine casuale", systemImage: "shuffle")
+            }
+            QueueMenuItems(tracks: mix.tracks)
+            AddToPlaylistMenu(tracks: mix.tracks)
+        }
+        .animation(.easeInOut(duration: 0.4), value: palette)
+        // The colors of the cover at the bottom left, the one the band continues from.
+        .task(id: mix.coverAlbumIds.last ?? "") {
+            guard let id = mix.coverAlbumIds.count >= 4 ? mix.coverAlbumIds[2] : mix.coverAlbumIds.first,
+                  let url = viewModel.artworkURL(for: id, size: 300),
+                  let loaded = await ImageLoader.shared.firstImage(from: [url]),
+                  let colors = HeroPalette(image: loaded) else { return }
+            palette = colors
+        }
+    }
 }
 
 extension JellyfinViewModel {

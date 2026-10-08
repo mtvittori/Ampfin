@@ -51,10 +51,14 @@ private struct Cover: View {
     var body: some View {
         Group {
             if let image = WidgetStore.image(for: itemId) {
-                image
-                    .resizable()
-                    .widgetAccentedRenderingMode(.desaturated)
-                    .aspectRatio(contentMode: .fill)
+                // Filling an overlay, not the view itself: a cover that isn't square
+                // grew past its frame and pushed the layout around.
+                Color.clear.overlay {
+                    image
+                        .resizable()
+                        .widgetAccentedRenderingMode(.desaturated)
+                        .aspectRatio(contentMode: .fill)
+                }
             } else {
                 Rectangle()
                     .fill(.white.opacity(0.15))

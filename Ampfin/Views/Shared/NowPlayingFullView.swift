@@ -237,10 +237,19 @@ struct NowPlayingFullView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(fg)
                     .lineLimit(1)
-                Text(viewModel.artistName(for: item) ?? "")
-                    .font(.title3)
-                    .foregroundStyle(fg.opacity(0.75))
-                    .lineLimit(1)
+                // Tap the artist to open their page, as in Apple Music.
+                Button {
+                    if let artist = viewModel.artistItem(for: item) {
+                        LibraryNavigator.shared.show(.artist(artist))
+                    }
+                } label: {
+                    Text(viewModel.artistName(for: item) ?? "")
+                        .font(.title3)
+                        .foregroundStyle(fg.opacity(0.75))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Apre la pagina dell'artista")
             }
             Spacer(minLength: 8)
 
@@ -281,6 +290,8 @@ struct NowPlayingFullView: View {
                 } label: {
                     Label("Ripeti: \(viewModel.repeatMode.description)", systemImage: viewModel.repeatMode.iconName)
                 }
+                Divider()
+                TrackNavigationMenuItems(track: item)
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 17, weight: .bold))
@@ -387,9 +398,13 @@ struct NowPlayingFullView: View {
         HStack {
             panelButton(.lyrics, systemImage: "quote.bubble", label: "Testo")
             Spacer()
+            #if os(iOS)
+            OutputRouteButton(color: fg)
+            #else
             AirPlayView()
                 .frame(width: 44, height: 44)
                 .tint(fg)
+            #endif
             Spacer()
             panelButton(.queue, systemImage: "list.bullet", label: "Coda")
         }
@@ -431,10 +446,18 @@ struct NowPlayingFullView: View {
                 if item.isLossless {
                     losslessBadge
                 }
-                Text(viewModel.artistName(for: item) ?? "")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
+                Button {
+                    if let artist = viewModel.artistItem(for: item) {
+                        LibraryNavigator.shared.show(.artist(artist))
+                    }
+                } label: {
+                    Text(viewModel.artistName(for: item) ?? "")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Apre la pagina dell'artista")
             }
 
             if let album = item.Album {
@@ -512,9 +535,13 @@ struct NowPlayingFullView: View {
 
             Spacer(minLength: 0)
 
+            #if os(iOS)
+            OutputRouteButton(color: .white)
+            #else
             AirPlayView()
                 .frame(width: 44, height: 44)
                 .tint(.white)
+            #endif
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -997,6 +1024,8 @@ private struct QueueList: View {
             } label: {
                 Label("Rimuovi dalla coda", systemImage: "minus.circle")
             }
+            Divider()
+            TrackNavigationMenuItems(track: track)
         }
     }
 }

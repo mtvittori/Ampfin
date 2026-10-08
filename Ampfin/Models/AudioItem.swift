@@ -32,6 +32,10 @@ struct AudioItem: Codable, Identifiable {
     let AlbumId: String?
     let Genres: [String]?
     let MediaSources: [MediaSourceInfo]?
+    /// The user's plays and favorite flag, when the server sends them (per user).
+    let UserData: UserItemData?
+    /// The song's entry inside a playlist, needed to take it out of the playlist.
+    let PlaylistItemId: String?
     
     var mainArtistName: String? { AlbumArtists?.first?.Name ?? Artists?.first }
     
@@ -44,4 +48,25 @@ struct AudioItem: Codable, Identifiable {
         guard let container = MediaSources?.first?.Container?.lowercased() else { return false }
         return container == "flac" || container == "alac"
     }
+}
+
+/// What Jellyfin keeps for each user about an item: how often and when it was played.
+struct UserItemData: Codable, Hashable {
+    let PlayCount: Int?
+    let LastPlayedDate: String?
+    let IsFavorite: Bool?
+    let Played: Bool?
+
+    /// LastPlayedDate as a date. Jellyfin writes seven decimals ("…:12.1234567Z"), which
+    /// ISO8601DateFormatter doesn't read, so the seconds are cut first.
+    var lastPlayed: Date? {
+        guard let raw = LastPlayedDate, raw.count >= 19 else { return nil }
+        return Self.parser.date(from: String(raw.prefix(19)) + "Z")
+    }
+
+    private static let parser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
 }

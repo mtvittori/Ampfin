@@ -142,13 +142,21 @@ final class EqualizerManager: ObservableObject {
         audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: format)
     }
 
-    func startEngine() {
-        guard !audioEngine.isRunning else { return }
-        do {
-            try audioEngine.start()
-        } catch {
-            print("EqualizerManager: Failed to start engine – \(error)")
+    /// Returns whether the engine is running afterwards. After a call or an output change
+    /// the first start can fail: the graph is prepared again and started once more.
+    @discardableResult
+    func startEngine() -> Bool {
+        guard !audioEngine.isRunning else { return true }
+        for attempt in 1...2 {
+            if attempt == 2 { _ = AmpfinCatchException { self.audioEngine.prepare() } }
+            var startError: Error?
+            let exception = AmpfinCatchException {
+                do { try self.audioEngine.start() } catch { startError = error }
+            }
+            if audioEngine.isRunning { return true }
+            print("EqualizerManager: Failed to start engine (attempt \(attempt)) – \(startError.map { "\($0)" } ?? exception?.reason ?? "unknown")")
         }
+        return false
     }
 
     func stopEngine() {

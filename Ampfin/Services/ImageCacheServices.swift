@@ -22,7 +22,7 @@ final class ImageCacheService {
         } else {
             self.diskCachePath = URL(fileURLWithPath: "")
         }
-        memoryCache.countLimit = 500
+        memoryCache.countLimit = 1500
         // Limit total memory cost to ~100 MB (assuming average ~200KB per image)
         memoryCache.totalCostLimit = 100 * 1024 * 1024
     }
@@ -47,7 +47,7 @@ final class ImageCacheService {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
 
         if let image = PlatformImage(data: data) {
-            memoryCache.setObject(image, forKey: key as NSString)
+            memoryCache.setObject(image, forKey: key as NSString, cost: Self.cost(of: image))
             return image
         }
 
@@ -55,7 +55,7 @@ final class ImageCacheService {
     }
 
     func setImage(_ image: PlatformImage, forKey key: String, toDisk: Bool = true) {
-        memoryCache.setObject(image, forKey: key as NSString)
+        memoryCache.setObject(image, forKey: key as NSString, cost: Self.cost(of: image))
         guard toDisk else { return }
 
         DispatchQueue.global(qos: .background).async {
@@ -92,6 +92,13 @@ final class ImageCacheService {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
             return total + Int64(size)
         }
+    }
+
+    /// Decoded size in bytes: without a cost, `totalCostLimit` does nothing and only the
+    /// count limit evicts, so small covers were thrown out as early as big ones.
+    private static func cost(of image: PlatformImage) -> Int {
+        guard let cgImage = image.cgImage else { return 0 }
+        return cgImage.bytesPerRow * cgImage.height
     }
 
     func key(for url: URL) -> String {

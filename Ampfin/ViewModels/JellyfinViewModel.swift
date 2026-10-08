@@ -155,6 +155,7 @@ class JellyfinViewModel: ObservableObject {
 
     // MARK: - Servizi e Manager
     private(set) var apiService: JellyfinAPIService?
+    private var playbackReporter: PlaybackReporter?
     private(set) var playerManager: AudioPlayerManager!
     
     // MARK: - Credenziali e Storage
@@ -179,6 +180,8 @@ class JellyfinViewModel: ObservableObject {
     
     private var token: String = ""
     private var userId: String = ""
+    /// The logged-in user: mixes and history are per user.
+    var currentUserId: String { userId }
     
     private var cancellables = Set<AnyCancellable>()
     private var serverUrlCancellable: AnyCancellable?
@@ -474,6 +477,8 @@ class JellyfinViewModel: ObservableObject {
         }
         
         // Reimposta lo stato dell'app
+        MixStore.shared.reset()
+        ScrobbleStatsStore.shared.reset()
         audioItems = []
         albums = []
         rawArtists = []
@@ -946,11 +951,14 @@ class JellyfinViewModel: ObservableObject {
         playerManager.similarProvider = { item in
             (try? await api.fetchInstantMix(itemId: item.Id)) ?? []
         }
+        // Listens go to the server as real playback sessions (start, progress, stop).
+        let reporter = PlaybackReporter(api: api, player: playerManager)
+        playbackReporter = reporter
         playerManager.markPlayedProvider = { [weak self] itemId in
             // Shown at once, also when the server can't be reached; the server's list
             // replaces it once the report goes through.
             await MainActor.run { self?.noteRecentlyPlayed(itemId) }
-            try await api.reportPlayed(itemId: itemId)
+            try await reporter.start(itemId: itemId)
         }
         playerManager.onDidReportPlayed = { [weak self] _ in
             Task { @MainActor in

@@ -73,11 +73,35 @@ final class DownloadManager: NSObject, ObservableObject {
 
     // MARK: - Download
 
+    /// Songs waiting their turn: "Scarica tutti" on the favorites queues hundreds at once.
+    private var pending: [(item: AudioItem, streamURL: URL)] = []
+    private let maxConcurrentDownloads = 3
+
     func download(item: AudioItem, streamURL: URL) {
-        guard !isDownloaded(item.Id), activeTasks[item.Id] == nil else { return }
+        guard !isDownloaded(item.Id), activeTasks[item.Id] == nil,
+              !pending.contains(where: { $0.item.Id == item.Id }) else { return }
 
         downloadStates[item.Id] = .downloading(progress: 0)
+        pending.append((item, streamURL))
+        startPendingDownloads()
+        #if os(iOS)
+        // Every download goes on in the background (a song, an album, all the favorites):
+        // songs added while one runs join its live activity.
+        DownloadBackgroundTask.shared.begin(itemIds: [item.Id])
+        #endif
+    }
 
+    /// Whether any song is downloading or waiting.
+    var hasActiveDownloads: Bool { !activeTasks.isEmpty || !pending.isEmpty }
+
+    private func startPendingDownloads() {
+        while activeTasks.count < maxConcurrentDownloads, !pending.isEmpty {
+            let next = pending.removeFirst()
+            start(item: next.item, streamURL: next.streamURL)
+        }
+    }
+
+    private func start(item: AudioItem, streamURL: URL) {
         let container = item.MediaSources?.first?.Container
         let task = JellyfinAPIService.urlSession.downloadTask(with: streamURL) { [weak self] tempURL, _, error in
             // Move file IMMEDIATELY — temp file is deleted after this closure returns
@@ -92,13 +116,22 @@ final class DownloadManager: NSObject, ObservableObject {
                 } else {
                     self.downloadStates[item.Id] = .notDownloaded
                 }
+                self.startPendingDownloads()
+                #if os(iOS)
+                DownloadBackgroundTask.shared.refresh()
+                #endif
             }
         }
 
         // KVO for progress tracking
         let observation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
             DispatchQueue.main.async {
-                self?.downloadStates[item.Id] = .downloading(progress: progress.fractionCompleted)
+                // A late update after a stop would leave the song "downloading" forever.
+                guard let self, self.activeTasks[item.Id] != nil else { return }
+                self.downloadStates[item.Id] = .downloading(progress: progress.fractionCompleted)
+                #if os(iOS)
+                DownloadBackgroundTask.shared.progressChanged()
+                #endif
             }
         }
         progressObservations[item.Id] = observation
@@ -141,7 +174,8 @@ final class DownloadManager: NSObject, ObservableObject {
     // MARK: - Remove
 
     func removeDownload(for itemId: String) {
-        // Cancel if in progress
+        // Cancel if in progress or waiting
+        pending.removeAll { $0.item.Id == itemId }
         activeTasks[itemId]?.cancel()
         activeTasks.removeValue(forKey: itemId)
         progressObservations.removeValue(forKey: itemId)
@@ -152,6 +186,9 @@ final class DownloadManager: NSObject, ObservableObject {
         }
         downloadedIds.remove(itemId)
         downloadStates[itemId] = .notDownloaded
+        #if os(iOS)
+        DownloadBackgroundTask.shared.refresh()
+        #endif
     }
 
     func removeAllDownloads() {

@@ -8,6 +8,27 @@ struct ArtistsView: View {
     /// Artist whose long-press menu asked to merge others into it.
     @State private var mergeTarget: ArtistItem?
 
+    @State private var sections: [LetterSection<ArtistItem>] = []
+    /// The flat rows of the A–Z style, built with the sections, not at every redraw.
+    @State private var rows: [LetterRow<ArtistItem>] = []
+    @AppStorage(LetterIndexStyle.storageKey) private var indexStyle = LetterIndexStyle.classic.rawValue
+    private var classicIndex: Bool { indexStyle == LetterIndexStyle.classic.rawValue }
+
+    private func artistRow(_ artist: ArtistItem) -> some View {
+        NavigationLink(value: artist) {
+            // One line, so every row has the same height: with rows of different heights
+            // the list re-measured them on the way back from an artist and slid down to
+            // find its place again.
+            Text(artist.Name)
+                .lineLimit(1)
+        }
+        .mergeArtistMenu(artist, target: $mergeTarget)
+    }
+
+    private var sectionsKey: String {
+        "\(displayedArtists.count)|\(displayedArtists.first?.Id ?? "")|\(displayedArtists.last?.Id ?? "")"
+    }
+
     // Use global search query to filter artists
     private var displayedArtists: [ArtistItem] {
         // On iPhone the search field filters only the Cerca tab.
@@ -73,11 +94,43 @@ struct ArtistsView: View {
     #endif
 
     private var artistList: some View {
-        List(displayedArtists) { artist in
-            NavigationLink(value: artist) {
-                Text(artist.Name)
+        // Grouped by letter, with the A–Z strip on the right to jump.
+        ScrollViewReader { proxy in
+            List {
+                if classicIndex {
+                    // iOS's own index: sections with their letter, the smoothest to scroll.
+                    ForEach(sections) { section in
+                        Section {
+                            ForEach(section.items) { artist in
+                                artistRow(artist)
+                            }
+                        } header: {
+                            Text(section.letter)
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .sectionIndexLabel(section.letter)
+                    }
+                } else {
+                    ForEach(rows) { row in
+                        switch row {
+                        case .letter(let letter): LetterHeaderRow(letter: letter)
+                        case .item(let artist): artistRow(artist)
+                        }
+                    }
+                }
             }
-            .mergeArtistMenu(artist, target: $mergeTarget)
+            .listStyle(.plain)
+            .systemLetterIndex(classicIndex)
+            .letterScrubber(letters: classicIndex ? [] : sections.map(\.letter)) { letter in
+                proxy.scrollTo(LetterIndex.rowId(letter), anchor: .top)
+            }
+        }
+        // Grouped once per change, not at every redraw.
+        .task(id: sectionsKey) {
+            let grouped = LetterIndex.sections(displayedArtists, name: \.Name)
+            sections = grouped
+            rows = LetterRow.rows(grouped)
         }
         .navigationTitle("Artisti")
         .sheet(item: $mergeTarget) { artist in

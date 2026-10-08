@@ -145,21 +145,27 @@ extension View {
 
 // MARK: - Play / Shuffle
 
-/// Apple Music's two buttons above a song list: play from the top, or shuffle.
-struct LibraryPlayButtons: View {
+/// Apple Music's two buttons above a song list: play from the top, or shuffle. An
+/// optional third, square button sits in the same row (sort, download all).
+struct LibraryPlayButtons<Accessory: View>: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let tracks: [AudioItem]
+    @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
-        HStack(spacing: 12) {
-            button("Riproduci", systemImage: "play.fill") {
-                if let first = tracks.first { viewModel.playerManager.play(item: first, in: tracks) }
-            }
-            button("Casuale", systemImage: "shuffle") {
-                viewModel.playerManager.playAlbumShuffled(tracks: tracks)
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) {
+                button("Riproduci", systemImage: "play.fill") {
+                    if let first = tracks.first { viewModel.playerManager.play(item: first, in: tracks) }
+                }
+                .disabled(tracks.isEmpty)
+                button("Casuale", systemImage: "shuffle") {
+                    viewModel.playerManager.playAlbumShuffled(tracks: tracks)
+                }
+                .disabled(tracks.isEmpty)
+                accessory()
             }
         }
-        .disabled(tracks.isEmpty)
     }
 
     private func button(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -173,5 +179,25 @@ struct LibraryPlayButtons: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+extension LibraryPlayButtons where Accessory == EmptyView {
+    init(tracks: [AudioItem]) {
+        self.init(tracks: tracks) { EmptyView() }
+    }
+}
+
+/// The square glass button that completes the row of LibraryPlayButtons.
+struct LibraryRowIcon<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.tint)
+            .frame(width: 48, height: 48)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

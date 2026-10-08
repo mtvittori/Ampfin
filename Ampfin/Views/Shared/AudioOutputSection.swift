@@ -12,6 +12,10 @@ struct AudioOutputSection: View {
     @State private var name = ""
     @State private var kind = ""
     @State private var symbol = "speaker.wave.2.fill"
+    #if os(iOS)
+    @State private var deviceKey: String?
+    @State private var chosenSymbol: String?
+    #endif
 
     var body: some View {
         Section {
@@ -32,6 +36,11 @@ struct AudioOutputSection: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                #if os(iOS)
+                if let deviceKey {
+                    iconMenu(for: deviceKey)
+                }
+                #endif
                 AirPlayView()
                     .frame(width: 44, height: 44)
             }
@@ -39,7 +48,7 @@ struct AudioOutputSection: View {
         } header: {
             Text("Uscita audio")
         } footer: {
-            Text("Il dispositivo su cui suona l'audio. Tocca il pulsante AirPlay per cambiarlo.")
+            Text("Il dispositivo su cui suona l'audio. Tocca il pulsante AirPlay per cambiarlo. L'icona resta anche se rinomini il dispositivo; se non è quella giusta, sceglila dal menu.")
         }
         .onAppear(perform: refresh)
         #if os(iOS)
@@ -59,7 +68,10 @@ struct AudioOutputSection: View {
         }
         name = output.portType == .builtInSpeaker ? "iPhone" : output.portName
         kind = Self.kindLabel(output.portType)
-        symbol = Self.symbol(for: output.portName, type: output.portType)
+        symbol = Self.symbol(for: output)
+        let external = output.portType != .builtInSpeaker && output.portType != .builtInReceiver
+        deviceKey = external ? OutputDeviceMemory.key(for: output) : nil
+        chosenSymbol = deviceKey.flatMap(OutputDeviceMemory.chosen)
         #else
         name = "Mac"
         kind = "Uscita di sistema"
@@ -82,8 +94,43 @@ struct AudioOutputSection: View {
         }
     }
 
-    /// The product drawing that matches the device's name, then one for its kind of port.
-    static func symbol(for name: String, type: AVAudioSession.Port) -> String {
+    private func iconMenu(for key: String) -> some View {
+        Menu {
+            Picker("Icona", selection: Binding(
+                get: { chosenSymbol ?? "" },
+                set: { newValue in
+                    OutputDeviceMemory.choose(newValue.isEmpty ? nil : newValue, for: key)
+                    withAnimation { refresh() }
+                }
+            )) {
+                Text("Automatica").tag("")
+                ForEach(OutputDeviceMemory.choices, id: \.symbol) { choice in
+                    Label(choice.label, systemImage: choice.symbol).tag(choice.symbol)
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Icona del dispositivo")
+    }
+
+    /// The drawing for an output: the one chosen in Settings, else the product's from its
+    /// name, else the one learned when the name still said it (renamed buds keep theirs),
+    /// else one for its kind of port.
+    static func symbol(for output: AVAudioSessionPortDescription) -> String {
+        let key = OutputDeviceMemory.key(for: output)
+        if let chosen = OutputDeviceMemory.chosen(for: key) { return chosen }
+        if let product = productSymbol(for: output.portName) {
+            OutputDeviceMemory.learn(product, for: key)
+            return product
+        }
+        return OutputDeviceMemory.learned(for: key) ?? portSymbol(for: output.portType)
+    }
+
+    /// The product drawing that matches the device's name, if any.
+    private static func productSymbol(for name: String) -> String? {
         let n = name.lowercased()
         let byName: [(String, String)] = [
             ("airpods max", "airpods.max"),
@@ -103,13 +150,19 @@ struct AudioOutputSection: View {
             ("beatsx", "beats.earphones"),
             ("urbeats", "beats.earphones"),
             ("beats", "beats.headphones"),
+            ("buds", "earbuds"),
+            ("earbuds", "earbuds"),
             ("homepod mini", "homepod.mini.fill"),
             ("homepod", "homepod.fill"),
             ("apple tv", "appletv.fill"),
         ]
-        if let match = byName.first(where: { n.contains($0.0) })?.1, UIImage(systemName: match) != nil {
-            return match
+        guard let match = byName.first(where: { n.contains($0.0) })?.1, UIImage(systemName: match) != nil else {
+            return nil
         }
+        return match
+    }
+
+    private static func portSymbol(for type: AVAudioSession.Port) -> String {
         switch type {
         case .builtInSpeaker, .builtInReceiver: return "iphone"
         case .headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP: return "headphones"
@@ -121,3 +174,52 @@ struct AudioOutputSection: View {
     }
     #endif
 }
+
+#if os(iOS)
+/// Remembers the drawing of each external output by its hardware address, which stays
+/// the same when the device is renamed.
+enum OutputDeviceMemory {
+    private static let chosenKey = "outputDeviceChosenSymbols"
+    private static let learnedKey = "outputDeviceLearnedSymbols"
+
+    static let choices: [(label: String, symbol: String)] = [
+        ("Cuffiette", "earbuds"),
+        ("AirPods", "airpods.gen3"),
+        ("AirPods Pro", "airpods.pro"),
+        ("Cuffie", "headphones"),
+        ("Altoparlante", "hifispeaker.fill"),
+        ("Auto", "car.fill"),
+    ]
+
+    /// A Bluetooth uid is the address plus the profile ("…-tacl" for music, "…-tsco" for
+    /// calls): only the address, so both profiles share the icon.
+    static func key(for output: AVAudioSessionPortDescription) -> String {
+        let uid = output.uid
+        if uid.count >= 17, uid.prefix(17).filter({ $0 == ":" }).count == 5 {
+            return String(uid.prefix(17)).uppercased()
+        }
+        return uid
+    }
+
+    static func chosen(for key: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: chosenKey) as? [String: String])?[key]
+    }
+
+    static func choose(_ symbol: String?, for key: String) {
+        var all = UserDefaults.standard.dictionary(forKey: chosenKey) as? [String: String] ?? [:]
+        all[key] = symbol
+        UserDefaults.standard.set(all, forKey: chosenKey)
+    }
+
+    static func learned(for key: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: learnedKey) as? [String: String])?[key]
+    }
+
+    static func learn(_ symbol: String, for key: String) {
+        var all = UserDefaults.standard.dictionary(forKey: learnedKey) as? [String: String] ?? [:]
+        guard all[key] != symbol else { return }
+        all[key] = symbol
+        UserDefaults.standard.set(all, forKey: learnedKey)
+    }
+}
+#endif

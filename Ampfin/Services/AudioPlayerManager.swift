@@ -34,6 +34,16 @@ final class AudioPlayerManager: ObservableObject {
     private var seekOffset: TimeInterval = 0
     /// Incremented each time we schedule new audio; stale completion handlers are ignored.
     private var playbackGeneration: Int = 0
+    /// What the user wants, set at once by play and pause, also while the song is still
+    /// downloading. A download that ends after a pause only loads the song.
+    private var wantsToPlay = false
+    /// Bumped by every play request and by stop: a download that finishes with an older
+    /// number is dropped, so it can't start a song the user has moved on from.
+    private var loadGeneration = 0
+    /// A download for the current song is in progress.
+    @Published private(set) var isLoading = false
+    /// The current file is queued on the player node from its start (see queueFromStart).
+    private var isQueued = false
 
     /// Published so the "A seguire" list follows additions and removals.
     @Published private var playQueue: [AudioItem] = []
@@ -90,8 +100,14 @@ final class AudioPlayerManager: ObservableObject {
     private var currentTempFile: URL?
     private var downloadTask: URLSessionDataTask?
 
+    /// A call (or Siri, an alarm) took the audio: nothing may restart it until it ends.
+    private var isInterrupted = false
+    /// The song was playing when the interruption began, so it resumes when it ends.
+    private var resumeAfterInterruption = false
+
     #if os(iOS)
     private var routeChangeObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
     #endif
 
     init(streamURLProvider: @escaping (String) -> URL?, artworkURLProvider: ((String, Int) -> URL?)? = nil) {
@@ -101,15 +117,18 @@ final class AudioPlayerManager: ObservableObject {
         configureAudioSessionIfNeeded()
         setupRemoteCommandCenter()
         // A new output (CarPlay, Bluetooth) stops the engine: start it again if a song was on.
+        // Not during a call: answering in CarPlay changes the output too, and the music
+        // started again over the call.
         eqManager.onConfigurationChange = { [weak self] in
-            guard let self, self.isPlaying else { return }
-            self.eqManager.startEngine()
-            if let exception = AmpfinCatchException({ self.playerNode.play() }) {
-                print("Could not resume after an output change – \(exception.reason ?? "")")
+            // Not while a song is still loading: there is nothing queued to restart.
+            guard let self, self.isPlaying, self.isQueued, !self.isInterrupted else { return }
+            if !self.startPlayerNode() {
+                self.markPausedAfterFailedStart()
             }
         }
         #if os(iOS)
         setupRouteChangeObserver()
+        setupInterruptionObserver()
         #endif
     }
 
@@ -133,12 +152,13 @@ final class AudioPlayerManager: ObservableObject {
 
         cachedNowPlayingArtworkImage = nil
         currentlyPlayingItem = item
+        wantsToPlay = true
         isPlaying = true
         updateNowPlayingInfo()
         scheduleReportPlayed(for: item)
 
         // Download audio to temp file, then play via AVAudioEngine
-        downloadAndPlay(url: url, item: item)
+        downloadAndPlay(url: url, item: item, generation: loadGeneration)
     }
 
     /// Reports the item as played once it's had a few seconds of genuine playback,
@@ -147,7 +167,8 @@ final class AudioPlayerManager: ObservableObject {
         playedReportTask?.cancel()
         playedReportTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let self, !Task.isCancelled, self.currentlyPlayingItem?.Id == item.Id else { return }
+            // Paused during the download: it wasn't played, so it isn't reported.
+            guard let self, !Task.isCancelled, self.isPlaying, self.currentlyPlayingItem?.Id == item.Id else { return }
             do {
                 try await self.markPlayedProvider?(item.Id)
                 await MainActor.run { self.onDidReportPlayed?(item) }
@@ -157,13 +178,13 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    private func downloadAndPlay(url: URL, item: AudioItem) {
+    private func downloadAndPlay(url: URL, item: AudioItem, generation: Int) {
         // Cancel any ongoing download
         downloadTask?.cancel()
 
         // If it's a local file, play directly
         if url.isFileURL {
-            playAudioFile(at: url)
+            fileLoaded(url)
             return
         }
 
@@ -172,17 +193,32 @@ final class AudioPlayerManager: ObservableObject {
         let cache = AudioStreamCache.shared
         let key = cache.key(itemId: item.Id, url: url)
         cache.lowerPriority(exceptKey: key)
+        isLoading = true
         cache.fetch(url, key: key, urgent: true) { [weak self] file in
-            guard let self, self.currentlyPlayingItem?.Id == item.Id else { return }
+            // Superseded by a newer play request or by stop: the cache keeps the file, nothing plays.
+            guard let self, self.loadGeneration == generation else { return }
+            self.isLoading = false
             guard let file else {
                 print("Download failed for \(item.Name)")
                 self.isPlaying = false
+                self.wantsToPlay = false
                 return
             }
-            self.playAudioFile(at: file)
-            self.prefetchNext()
-            self.topUpAutoplay()
+            self.fileLoaded(file)
         }
+    }
+
+    /// The song's file is here. It is opened, and started only if the user still wants it:
+    /// paused while loading, it stays ready so that play starts it at once.
+    private func fileLoaded(_ file: URL) {
+        guard openFile(at: file) else {
+            isPlaying = false
+            wantsToPlay = false
+            return
+        }
+        if wantsToPlay { resumePlayback() }
+        prefetchNext()
+        topUpAutoplay()
     }
 
     /// Fetches the next song of the queue while this one plays, so "next" and the
@@ -194,52 +230,54 @@ final class AudioPlayerManager: ObservableObject {
         cache.prefetch(url, key: cache.key(itemId: next.Id, url: url))
     }
 
-    private func playAudioFile(at url: URL) {
+    /// Opens the song's file and wires the engine for its format. Nothing plays here.
+    private func openFile(at url: URL) -> Bool {
         do {
             let audioFile = try AVAudioFile(forReading: url)
-            currentAudioFile = audioFile
-
-            let format = audioFile.processingFormat
-            guard eqManager.reconnect(withFormat: format) else {
-                print("Audio engine refused the format \(format)")
-                isPlaying = false
-                return
+            guard eqManager.reconnect(withFormat: audioFile.processingFormat) else {
+                print("Audio engine refused the format \(audioFile.processingFormat)")
+                return false
             }
-            eqManager.startEngine()
-
+            currentAudioFile = audioFile
+            isQueued = false
             seekOffset = 0
             scheduledStartFrame = 0
-            playbackGeneration += 1
-            let gen = playbackGeneration
-            // AVAudioEngine raises (rather than throws) on a stopped engine or a format
-            // mismatch: caught here, it stops this song instead of the whole app.
-            if let exception = AmpfinCatchException({
-                playerNode.stop()
-                playerNode.scheduleFile(audioFile, at: nil) { [weak self] in
-                    DispatchQueue.main.async {
-                        guard let self, self.playbackGeneration == gen else { return }
-                        self.handlePlaybackCompletion()
-                    }
-                }
-                playerNode.play()
-            }) {
-                print("Failed to start playback – \(exception.name.rawValue): \(exception.reason ?? "")")
-                isPlaying = false
-                return
-            }
-            isPlaying = true
-            startTimeUpdater()
-            updateNowPlayingInfo()
-
-            // Refresh audio info
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                self.refreshAudioOutputInfo()
-            }
+            return true
         } catch {
             print("Failed to open audio file: \(error)")
-            isPlaying = false
+            return false
         }
+    }
+
+    /// Queues the whole file on the player node. The node makes no sound until play() is
+    /// called, so a file queued here can wait for the user. AVAudioEngine raises (rather
+    /// than throws) on a stopped engine or a format mismatch: caught here, it stops this
+    /// song instead of the whole app.
+    private func queueFromStart(_ audioFile: AVAudioFile) -> Bool {
+        playbackGeneration += 1
+        let gen = playbackGeneration
+        if let exception = AmpfinCatchException({
+            playerNode.stop()
+            playerNode.scheduleFile(audioFile, at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, self.playbackGeneration == gen else { return }
+                    self.handlePlaybackCompletion()
+                }
+            }
+        }) {
+            print("Failed to queue playback – \(exception.name.rawValue): \(exception.reason ?? "")")
+            return false
+        }
+        seekOffset = 0
+        scheduledStartFrame = 0
+        isQueued = true
+
+        // Refresh audio info
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self.refreshAudioOutputInfo()
+        }
+        return true
     }
 
     private func handlePlaybackCompletion() {
@@ -370,8 +408,7 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func togglePlayPause() {
-        guard currentAudioFile != nil else { return }
-        if isPlaying {
+        if wantsToPlay {
             pause()
         } else {
             resumePlayback()
@@ -383,7 +420,11 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func pause() {
-        guard audioEngine.isRunning else { return }
+        // First, so a song still downloading doesn't start when it arrives.
+        wantsToPlay = false
+        // Also when the system already stopped the engine (a call): the state, the lock
+        // screen and the Dynamic Island must still say paused.
+        guard currentlyPlayingItem != nil else { return }
         playerNode.pause()
         isPlaying = false
         stopTimeUpdater()
@@ -391,13 +432,55 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     private func resumePlayback() {
-        guard currentAudioFile != nil else { return }
-        if !audioEngine.isRunning {
-            eqManager.startEngine()
+        guard currentlyPlayingItem != nil else { return }
+        guard let audioFile = currentAudioFile else {
+            if isLoading {
+                // Still downloading: fileLoaded starts it.
+                wantsToPlay = true
+                isPlaying = true
+            } else if let item = currentlyPlayingItem {
+                // The download failed: play tries it again.
+                play(item: item, in: playQueue)
+            }
+            return
         }
-        playerNode.play()
+        wantsToPlay = true
+        if !isQueued {
+            // Opened while paused, or just loaded: queue it from the start. The engine
+            // starts first, as the node needs it running.
+            activateAudioSession()
+            guard eqManager.startEngine(), queueFromStart(audioFile) else {
+                markPausedAfterFailedStart()
+                return
+            }
+        }
+        guard startPlayerNode() else {
+            markPausedAfterFailedStart()
+            return
+        }
         isPlaying = true
         startTimeUpdater()
+        updateNowPlayingInfo()
+    }
+
+    /// Takes the audio session, starts the engine and the player node. The node raises an
+    /// Objective-C exception when the engine is stopped (after a call or an output change
+    /// the engine may not start again): that aborted the app on 07/10, from the play button.
+    private func startPlayerNode() -> Bool {
+        activateAudioSession()
+        guard eqManager.startEngine() else { return false }
+        if let exception = AmpfinCatchException({ self.playerNode.play() }) {
+            print("Could not start the player – \(exception.name.rawValue): \(exception.reason ?? "")")
+            return false
+        }
+        return true
+    }
+
+    /// The engine would not start: show paused, so the next tap tries again.
+    private func markPausedAfterFailedStart() {
+        wantsToPlay = false
+        isPlaying = false
+        stopTimeUpdater()
         updateNowPlayingInfo()
     }
 
@@ -440,19 +523,41 @@ final class AudioPlayerManager: ObservableObject {
 
         guard remainingFrames > 0 else { return }
 
+        // A song loaded while paused may find the engine stopped: the node needs it running
+        // to take the segment, and AVAudioEngine raises (not throws) when it isn't.
+        activateAudioSession()
+        guard eqManager.startEngine() else {
+            markPausedAfterFailedStart()
+            return
+        }
         playbackGeneration += 1
         let gen = playbackGeneration
-        playerNode.stop()
         seekOffset = time
         scheduledStartFrame = clampedFrame
-
-        playerNode.scheduleSegment(audioFile, startingFrame: clampedFrame, frameCount: remainingFrames, at: nil) { [weak self] in
-            DispatchQueue.main.async {
-                guard let self, self.playbackGeneration == gen else { return }
-                self.handlePlaybackCompletion()
+        if let exception = AmpfinCatchException({
+            playerNode.stop()
+            playerNode.scheduleSegment(audioFile, startingFrame: clampedFrame, frameCount: remainingFrames, at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, self.playbackGeneration == gen else { return }
+                    self.handlePlaybackCompletion()
+                }
             }
+        }) {
+            print("Failed to seek – \(exception.name.rawValue): \(exception.reason ?? "")")
+            markPausedAfterFailedStart()
+            return
         }
-        playerNode.play()
+        isQueued = true
+        // Moving the position while paused stays paused, as in Apple Music.
+        guard wantsToPlay else {
+            currentTime = time
+            updateNowPlayingInfo()
+            return
+        }
+        guard startPlayerNode() else {
+            markPausedAfterFailedStart()
+            return
+        }
         isPlaying = true
         startTimeUpdater()
         updateNowPlayingInfo()
@@ -462,6 +567,11 @@ final class AudioPlayerManager: ObservableObject {
         playedReportTask?.cancel()
         downloadTask?.cancel()
         downloadTask = nil
+        // Cancels a download still in progress: it will not start the song.
+        loadGeneration += 1
+        wantsToPlay = false
+        isLoading = false
+        isQueued = false
         playbackGeneration += 1
         playerNode.stop()
         stopTimeUpdater()
@@ -512,11 +622,22 @@ final class AudioPlayerManager: ObservableObject {
     private func configureAudioSessionIfNeeded() {
         #if os(iOS)
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [])
-            try session.setActive(true)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         } catch {
             print("AVAudioSession setup failed: \(error)")
+        }
+        #endif
+    }
+
+    /// Takes the audio back before every start. It was done once at launch, so after a
+    /// call or another app's sound the session stayed inactive: no Dynamic Island, and
+    /// the lock screen controls went to the other app.
+    private func activateAudioSession() {
+        #if os(iOS)
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("AVAudioSession activation failed: \(error)")
         }
         #endif
     }
@@ -530,7 +651,9 @@ final class AudioPlayerManager: ObservableObject {
             MPMediaItemPropertyArtist: item.mainArtistName ?? "",
             MPMediaItemPropertyPlaybackDuration: item.duration ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
 
         if let artworkURLProvider {
@@ -574,6 +697,17 @@ final class AudioPlayerManager: ObservableObject {
         }
         commandCenter.pauseCommand.addTarget { [weak self] _ in
             self?.pause()
+            return .success
+        }
+        // Headphones, CarPlay and the Dynamic Island often send this one instead of play/pause.
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self, self.currentlyPlayingItem != nil else { return .noActionableNowPlayingItem }
+            self.togglePlayPause()
+            return .success
+        }
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self.seek(to: event.positionTime)
             return .success
         }
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
@@ -672,9 +806,43 @@ final class AudioPlayerManager: ObservableObject {
             forName: AVAudioSession.routeChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
             self?.updateOutputDevice()
             self?.updateDeviceOutputInfo()
+            // Buds out of the ear or out of range: pause instead of going on from the speaker.
+            if let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+               AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable,
+               self?.isPlaying == true {
+                self?.pause()
+            }
+        }
+    }
+
+    private func setupInterruptionObserver() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            switch type {
+            case .began:
+                self.isInterrupted = true
+                self.resumeAfterInterruption = self.isPlaying
+                if self.isPlaying { self.pause() }
+            case .ended:
+                self.isInterrupted = false
+                let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume)
+                if self.resumeAfterInterruption && shouldResume {
+                    self.resumePlayback()
+                }
+                self.resumeAfterInterruption = false
+            @unknown default:
+                break
+            }
         }
     }
     #endif

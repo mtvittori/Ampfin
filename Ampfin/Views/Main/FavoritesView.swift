@@ -25,7 +25,7 @@ struct FavoritesView: View {
         } else {
             List {
                 if !tracks.isEmpty {
-                    LibraryPlayButtons(tracks: tracks)
+                    LibraryPlayButtons(tracks: tracks) { DownloadAllButton(tracks: tracks) }
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .entrance(.rise)
@@ -73,6 +73,7 @@ struct FavoritesView: View {
 /// take it out of the favorites.
 private struct FavoriteTrackRow: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var downloadManager = DownloadManager.shared
     let track: AudioItem
     let queue: [AudioItem]
 
@@ -80,25 +81,41 @@ private struct FavoriteTrackRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 160), targetSize: 52,
-                content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                placeholder: { RoundedRectangle(cornerRadius: 8).fill(.quaternary) }
-            )
-            .frame(width: 52, height: 52)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Button {
+                viewModel.playerManager.play(item: track, in: queue)
+            } label: {
+                HStack(spacing: 12) {
+                    CachedAsyncImage(url: viewModel.artworkURL(for: track.AlbumId ?? track.id, size: 160), targetSize: 52,
+                        content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                        placeholder: { RoundedRectangle(cornerRadius: 8).fill(.quaternary) }
+                    )
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(track.Name)
-                    .font(.body)
-                    .foregroundStyle(isCurrent ? Color.accentColor : .primary)
-                    .lineLimit(1)
-                Text(viewModel.artistName(for: track) ?? "")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(track.Name)
+                            .font(.body)
+                            .foregroundStyle(isCurrent ? Color.accentColor : .primary)
+                            .lineLimit(1)
+                        Text(viewModel.artistName(for: track) ?? "")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            Spacer(minLength: 8)
+            if downloadManager.isDownloaded(track.Id) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Scaricato")
+            }
 
             if isCurrent {
                 Image(systemName: viewModel.isPlaying ? "waveform" : "pause.fill")
@@ -119,9 +136,6 @@ private struct FavoriteTrackRow: View {
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.playerManager.play(item: track, in: queue)
-        }
         .contextMenu {
             Button {
                 viewModel.playerManager.play(item: track, in: queue)
@@ -130,11 +144,65 @@ private struct FavoriteTrackRow: View {
             }
             QueueMenuItems(tracks: [track])
             Divider()
+            TrackNavigationMenuItems(track: track)
+            Divider()
             Button(role: .destructive) {
                 withAnimation { viewModel.toggleFavoriteTrack(track.id) }
             } label: {
                 Label("Rimuovi dai preferiti", systemImage: "heart.slash")
             }
         }
+    }
+}
+
+/// Downloads every favorite song to the phone, a few at a time, as the third button
+/// next to Play and Shuffle: an arrow, then a ring that fills (tap to stop), then a tick.
+/// iOS keeps it going in the background and shows it as a live activity.
+struct DownloadAllButton: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    @ObservedObject private var downloadManager = DownloadManager.shared
+    let tracks: [AudioItem]
+
+    var body: some View {
+        let states = tracks.map { downloadManager.downloadStates[$0.Id] ?? .notDownloaded }
+        let done = states.filter { $0 == .downloaded }.count
+        let inProgress = states.contains { if case .downloading = $0 { return true } else { return false } }
+        let missing = tracks.count - done
+
+        Button {
+            if inProgress {
+                // Stop what hasn't finished; the songs already saved stay.
+                for (track, state) in zip(tracks, states) {
+                    if case .downloading = state { viewModel.removeDownload(for: track.Id) }
+                }
+            } else {
+                tracks.filter { !downloadManager.isDownloaded($0.Id) }.forEach(viewModel.downloadTrack)
+            }
+        } label: {
+            LibraryRowIcon {
+                if inProgress {
+                    ZStack {
+                        Circle()
+                            .stroke(.tint.opacity(0.25), lineWidth: 2.5)
+                        Circle()
+                            .trim(from: 0, to: Double(done) / Double(max(tracks.count, 1)))
+                            .stroke(.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .frame(width: 22, height: 22)
+                    .animation(.snappy, value: done)
+                } else {
+                    Image(systemName: missing == 0 ? "checkmark" : "arrow.down")
+                        .foregroundStyle(missing == 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(missing == 0)
+        .accessibilityLabel(missing == 0 ? "Tutti i preferiti sono scaricati"
+                            : inProgress ? "Download \(done) di \(tracks.count), tocca per fermare"
+                            : "Scarica tutti i preferiti (\(missing))")
     }
 }

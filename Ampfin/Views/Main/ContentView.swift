@@ -60,6 +60,8 @@ struct ContentView: View {
 
     var body: some View {
         mainBody
+            // The name prompt of "Nuova playlist…", from any song menu.
+            .modifier(NewPlaylistPrompt())
             // "Riprodotto dopo" / "Aggiunto alla coda" drops in at the top.
             .overlay(alignment: .top) { QueueToast() }
             // Links from the widgets: ampfin://player and ampfin://album/<id>.
@@ -134,6 +136,33 @@ struct ContentView: View {
 
     #if os(iOS)
     @State private var selectedTab: SidebarItem = .home
+    /// The Album and Artisti stacks, so "Vai all'album/artista" can open a page in them.
+    @State private var albumsPath = NavigationPath()
+    @State private var artistsPath = NavigationPath()
+    @ObservedObject private var navigator = LibraryNavigator.shared
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @AppStorage(CoverFlowSettings.storageKey) private var landscapeCoverFlow = false
+
+    /// Full-screen Cover Flow only when the phone is sideways (compact height).
+    private var showLandscapeCoverFlow: Bool {
+        landscapeCoverFlow && verticalSizeClass == .compact
+    }
+
+    /// "Vai all'artista" / "Vai all'album": closes the player and the album sheet, moves
+    /// to that tab and opens the page on a fresh stack.
+    private func handle(_ request: LibraryNavigator.Request?) {
+        guard let request else { return }
+        showFullPlayer = false
+        linkedAlbum = nil
+        switch request.destination {
+        case .artist(let artist):
+            selectedTab = .artists
+            artistsPath = NavigationPath([artist])
+        case .album(let album):
+            selectedTab = .albums
+            albumsPath = NavigationPath([album])
+        }
+    }
 
     private var iOSContent: some View {
         ZStack {
@@ -165,7 +194,7 @@ struct ContentView: View {
                 Tab(SidebarItem.albums.title, systemImage: SidebarItem.albums.systemImage, value: .albums) {
                     // Zoom transitions from covers to their pages.
                     ZoomScope {
-                        NavigationStack {
+                        NavigationStack(path: $albumsPath) {
                             AlbumsView()
                                 .iOSToolbar(viewModel: viewModel, title: "Album",
                                             subtitle: countLabel(viewModel.albums.count, one: "album", many: "album"))
@@ -176,7 +205,7 @@ struct ContentView: View {
                 Tab(SidebarItem.artists.title, systemImage: SidebarItem.artists.systemImage, value: .artists) {
                     // Zoom transitions from covers to their pages.
                     ZoomScope {
-                        NavigationStack {
+                        NavigationStack(path: $artistsPath) {
                             ArtistsView()
                                 .iOSToolbar(viewModel: viewModel, title: "Artisti",
                                             subtitle: countLabel(viewModel.artists.count, one: "artista", many: "artisti"))
@@ -240,13 +269,45 @@ struct ContentView: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.88), value: showFullPlayer)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: miniPlayerVisible)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
-        .task { await loadLibraryIfNeeded() }
+        .task {
+            await loadLibraryIfNeeded()
+            // For "Aggiungi a playlist" in the song menus.
+            await MixStore.shared.refreshPlaylists(viewModel: viewModel)
+        }
+        .onChange(of: navigator.request) { _, request in handle(request) }
+        // Above the tabs, the mini player and the full player; the contentShape keeps
+        // touches from reaching what is underneath.
+        .overlay {
+            ZStack {
+                if showLandscapeCoverFlow {
+                    LandscapeCoverFlow()
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                }
+            }
+            // Only the fade of the Cover Flow: on the whole content it animated the
+            // rotation of every screen underneath too.
+            .animation(.easeInOut(duration: 0.3), value: showLandscapeCoverFlow)
+        }
+        .statusBarHidden(showLandscapeCoverFlow)
         #if DEBUG
         .task { await applyTestLaunchArguments() }
+        .sheet(isPresented: $testFavorites) {
+            NavigationStack { FavoritesView() }
+                .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $testStats) {
+            NavigationStack { ScrobbleStatsPage() }
+                .environmentObject(viewModel)
+        }
         #endif
     }
 
     #if DEBUG
+    @State private var testFavorites = false
+    @State private var testStats = false
+
     /// Test-only launch arguments, to photograph screens on the phone from the Mac:
     /// `-provaScheda artists` opens a tab; `-provaPlay <artist>` starts that artist,
     /// pauses straight away and opens the full player (`-provaMini YES`: mini player only).
@@ -254,6 +315,17 @@ struct ContentView: View {
         let defaults = UserDefaults.standard
         if let tab = defaults.string(forKey: "provaScheda").flatMap(SidebarItem.init(rawValue:)) {
             selectedTab = tab
+        }
+        // `-provaPreferiti YES` opens the favorites page.
+        testFavorites = defaults.bool(forKey: "provaPreferiti")
+        // `-provaStatistiche YES` opens the listening statistics.
+        testStats = defaults.bool(forKey: "provaStatistiche")
+        // `-provaScarica YES` starts "Scarica tutti" on the favorites, as the button does.
+        if defaults.bool(forKey: "provaScarica") {
+            for _ in 0..<60 where viewModel.audioItems.isEmpty {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            viewModel.favoriteTracks.filter { !viewModel.isTrackDownloaded($0.Id) }.forEach(viewModel.downloadTrack)
         }
         guard let name = defaults.string(forKey: "provaPlay") else { return }
         for _ in 0..<60 where viewModel.audioItems.isEmpty {

@@ -26,6 +26,10 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
         self.targetSize = targetSize
         self.content = content
         self.placeholder = placeholder
+        // A row that scrolls back into view finds its cover in the memory cache at once:
+        // no placeholder frame before onAppear. Memory only, as in loadIfNeeded.
+        let cached = url.flatMap { ImageCacheService.shared.memoryImage(forKey: ImageCacheService.shared.key(for: $0)) }
+        _image = State(initialValue: cached.map { Image(platformImage: $0) })
     }
 
     var body: some View {

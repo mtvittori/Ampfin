@@ -339,6 +339,9 @@ struct HeroTrackRow: View {
             }
             QueueMenuItems(tracks: [track])
             Divider()
+            // On an album page (numbered rows) the album is already open.
+            TrackNavigationMenuItems(track: track, showsAlbum: number == nil)
+            Divider()
             Button {
                 viewModel.toggleFavoriteTrack(track.id)
             } label: {
