@@ -76,6 +76,7 @@ struct TracksView: View {
                 LibraryPlayButtons(tracks: queue) { sortMenu }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 10, trailing: 16))
+                    .albumBackdropRow()
 
                 // Sections with their letter in both index styles. A single flat list of
                 // 8.000 rows mixing letters and songs lagged badly: the List lays out
@@ -84,6 +85,7 @@ struct TracksView: View {
                     Section {
                         ForEach(section.items) { item in
                             row(for: item)
+                                .albumBackdropRow()
                         }
                     } header: {
                         Text(section.letter)

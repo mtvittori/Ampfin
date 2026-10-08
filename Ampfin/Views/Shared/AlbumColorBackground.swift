@@ -159,6 +159,8 @@ private struct AlbumColorBackgroundModifier: ViewModifier {
             content
                 .scrollContentBackground(.hidden)
                 .background { AlbumColorBackground() }
+                // The rows read this to drop their own opaque background (albumBackdropRow()).
+                .environment(\.albumBackdropActive, true)
         } else {
             content
         }
@@ -168,7 +170,28 @@ private struct AlbumColorBackgroundModifier: ViewModifier {
     }
 }
 
+extension EnvironmentValues {
+    /// True under albumColorBackground() when the setting is on.
+    @Entry var albumBackdropActive = false
+}
+
+private struct AlbumBackdropRowModifier: ViewModifier {
+    @Environment(\.albumBackdropActive) private var active
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if active {
+            content.listRowBackground(Color.clear)
+        } else {
+            content
+        }
+    }
+}
+
 extension View {
     /// The cover-colored background of the main iOS screens, when the setting is on.
     func albumColorBackground() -> some View { modifier(AlbumColorBackgroundModifier()) }
+
+    /// On a row of a list under albumColorBackground(): clear, so the tint shows through.
+    func albumBackdropRow() -> some View { modifier(AlbumBackdropRowModifier()) }
 }

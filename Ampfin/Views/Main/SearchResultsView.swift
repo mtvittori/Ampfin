@@ -106,11 +106,13 @@ struct SearchResultsView: View {
                 Text("Nessun risultato in \"\(filter.rawValue)\".")
                     .foregroundStyle(.secondary)
                     .listRowSeparator(.hidden)
+                    .albumBackdropRow()
             }
 
             // Bottom spacer for player
             Spacer().frame(height: 150)
                 .listRowSeparator(.hidden)
+                .albumBackdropRow()
         }
         .listStyle(.plain)
     }
@@ -124,6 +126,7 @@ struct SearchResultsView: View {
                     NavigationLink(destination: ArtistAlbumsView(artist: artist)) {
                         Label(artist.Name, systemImage: "music.mic")
                     }
+                    .albumBackdropRow()
                 }
             }
         }
@@ -138,6 +141,7 @@ struct SearchResultsView: View {
                     NavigationLink(destination: AlbumTracksListView(album: album)) {
                         albumRow(album)
                     }
+                    .albumBackdropRow()
                 }
             }
         }
@@ -224,5 +228,6 @@ struct SearchResultsView: View {
             Divider()
             TrackNavigationMenuItems(track: track)
         }
+        .albumBackdropRow()
     }
 }

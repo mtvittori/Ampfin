@@ -23,6 +23,7 @@ struct ArtistsView: View {
                 .lineLimit(1)
         }
         .mergeArtistMenu(artist, target: $mergeTarget)
+        .albumBackdropRow()
     }
 
     private var sectionsKey: String {
@@ -115,7 +116,7 @@ struct ArtistsView: View {
                 } else {
                     ForEach(rows) { row in
                         switch row {
-                        case .letter(let letter): LetterHeaderRow(letter: letter)
+                        case .letter(let letter): LetterHeaderRow(letter: letter).albumBackdropRow()
                         case .item(let artist): artistRow(artist)
                         }
                     }
