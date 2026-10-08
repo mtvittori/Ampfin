@@ -40,13 +40,18 @@ struct OutputRouteButton: View {
                 .font(.system(size: 17, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
             if !name.isEmpty {
+                // Capped at 150 pt; a longer name is cut with "…" instead of pushing the other buttons.
                 Text(name)
                     .font(.footnote.weight(.semibold))
                     .lineLimit(1)
-                    .frame(maxWidth: 150, alignment: .leading)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 150)
                     .transition(.opacity)
             }
         }
+        // Hug the content: a frame that takes the whole column would leave the text
+        // off-centre (it was left-aligned inside a 150 pt box).
+        .fixedSize()
         .foregroundStyle(color)
         .frame(minWidth: 44, minHeight: 44)
         // The real picker on top, invisible: it gets the tap and opens the system menu.

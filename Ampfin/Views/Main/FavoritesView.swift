@@ -22,12 +22,14 @@ struct FavoritesView: View {
             ContentUnavailableView("Nessun preferito", systemImage: "heart",
                                    description: Text("Tocca il cuore su un album, o tieni premuto un brano, per ritrovarli qui."))
                 .navigationTitle("Preferiti")
+                .albumColorBackground()
         } else {
             List {
                 if !tracks.isEmpty {
                     LibraryPlayButtons(tracks: tracks) { DownloadAllButton(tracks: tracks) }
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .albumBackdropRow()
                         .entrance(.rise)
                 }
 
@@ -36,6 +38,7 @@ struct FavoritesView: View {
                     AlbumStrip(albums: albums, group: "favorites")
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                        .albumBackdropRow()
                         .entrance(.rise, delay: 0.06)
                 }
 
@@ -44,6 +47,7 @@ struct FavoritesView: View {
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                         FavoriteTrackRow(track: track, queue: tracks)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                            .albumBackdropRow()
                             .queueSwipeActions(track, viewModel: viewModel)
                             .entrance(.slide, delay: 0.1 + Double(index) * 0.03, enabled: index < 12)
                     }
@@ -52,6 +56,7 @@ struct FavoritesView: View {
             .listStyle(.plain)
             .contentMargins(.bottom, 170)
             .navigationTitle("Preferiti")
+            .albumColorBackground()
         }
     }
 
@@ -65,6 +70,7 @@ struct FavoritesView: View {
         }
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 18, leading: 20, bottom: 6, trailing: 20))
+        .albumBackdropRow()
         .accessibilityAddTraits(.isHeader)
     }
 }

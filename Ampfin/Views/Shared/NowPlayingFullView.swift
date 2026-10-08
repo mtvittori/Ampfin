@@ -160,7 +160,7 @@ struct NowPlayingFullView: View {
     enum PlayerPanel { case artwork, lyrics, queue }
 
     /// Apple Music on iOS 26: the cover edge to edge at the top, fading into its own
-    /// blurred colors; title and artist with star and "⋯"; thick scrubber with the
+    /// blurred colors; title and artist with heart and "⋯"; thick scrubber with the
     /// remaining time and the format; bare transport glyphs; volume; lyrics · output · queue.
     private func appleMusicLayout(_ geo: GeometryProxy) -> some View {
         let width = geo.size.width
@@ -262,11 +262,11 @@ struct NowPlayingFullView: View {
             Button {
                 viewModel.toggleFavoriteTrack(item.id)
             } label: {
-                Image(systemName: viewModel.isTrackFavorite(item.id) ? "star.fill" : "star")
+                Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
                     .font(.system(size: 17, weight: .semibold))
                     .contentTransition(.symbolEffect(.replace))
                     .symbolEffect(.bounce, value: viewModel.isTrackFavorite(item.id))
-                    .foregroundStyle(fg)
+                    .foregroundStyle(viewModel.isTrackFavorite(item.id) ? Color.pink : fg)
                     .frame(width: 40, height: 40)
                     .glassEffect(.regular.interactive(), in: .circle)
             }
