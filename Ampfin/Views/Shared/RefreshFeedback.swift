@@ -50,6 +50,17 @@ final class LibraryRefresh: ObservableObject {
             self.phase = .idle
         }
     }
+
+    /// Returns once no refresh is running and the pull-down spring-back has had time to
+    /// finish. Screens call it before swapping content that the refresh made stale: a
+    /// layout change while the scroll view is rubber-banding cancels its spring.
+    func settled() async {
+        while phase == .refreshing { try? await Task.sleep(for: .milliseconds(100)) }
+        if case .done(let date) = phase {
+            let wait = 0.8 - Date().timeIntervalSince(date)
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        }
+    }
 }
 
 private struct LibraryRefreshBanner: ViewModifier {

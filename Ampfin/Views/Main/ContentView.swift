@@ -276,7 +276,6 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.88), value: showFullPlayer)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: miniPlayerVisible)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
         .task {
             await loadLibraryIfNeeded()
@@ -563,28 +562,13 @@ extension View {
     }
 }
 
-/// Modifier that hides the mini player when the user scrolls down and shows it when scrolling up.
+/// Used to hide the mini player while scrolling down; iOS 26's own `tabBarMinimizeBehavior`
+/// does that now, and nothing reads `miniPlayerVisible` any more. The old observer wrote a
+/// @State at every scroll frame (also while rubber-banding at the top) and flipped a flag
+/// under a root-level `.animation`, which cancelled the system spring of an overscroll.
+/// Kept as a pass-through so the screens that call it don't change.
 struct ScrollHidesMiniPlayer: ViewModifier {
-    @Environment(\.miniPlayerVisible) var miniPlayerVisible
-    @State private var lastOffset: CGFloat = 0
-
-    func body(content: Content) -> some View {
-        content
-            .onScrollGeometryChange(for: CGFloat.self) { geo in
-                geo.contentOffset.y
-            } action: { oldOffset, newOffset in
-                let delta = newOffset - lastOffset
-                // Only react to meaningful scroll movements
-                if abs(delta) > 4 {
-                    let scrollingDown = delta > 0 && newOffset > 0
-                    // Write only on a real change: every write redraws the root view and its tabs.
-                    if miniPlayerVisible.wrappedValue == scrollingDown {
-                        miniPlayerVisible.wrappedValue = !scrollingDown
-                    }
-                    lastOffset = newOffset
-                }
-            }
-    }
+    func body(content: Content) -> some View { content }
 }
 
 extension View {

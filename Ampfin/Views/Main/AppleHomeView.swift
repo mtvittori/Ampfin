@@ -26,6 +26,9 @@ struct AppleHomeView: View {
     /// Worked out when the library or the history changes, not at every redraw
     /// (it shuffles the whole album list).
     @State private var topPicks: [HomePick] = []
+    /// Same for the genre strip: counting every album's genre in `body` ran at each of the
+    /// many publishes of a refresh, right when the pull-down spring needs the main thread.
+    @State private var topGenre: (name: String, albums: [AlbumItem])?
     @ObservedObject private var mixStore = MixStore.shared
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
     /// Settings → Mix in Home: mixes as big cards among the top picks, as Apple Music does.
@@ -53,10 +56,10 @@ struct AppleHomeView: View {
     }
 
     /// The genre with most albums, and its albums.
-    private var topGenre: (name: String, albums: [AlbumItem])? {
-        let counts = Dictionary(viewModel.albums.compactMap(\.Genres?.first).map { ($0, 1) }, uniquingKeysWith: +)
+    private static func makeTopGenre(from albums: [AlbumItem]) -> (name: String, albums: [AlbumItem])? {
+        let counts = Dictionary(albums.compactMap(\.Genres?.first).map { ($0, 1) }, uniquingKeysWith: +)
         guard let genre = counts.max(by: { $0.value < $1.value })?.key else { return nil }
-        return (genre, Array(viewModel.albums.filter { $0.Genres?.contains(genre) ?? false }.prefix(12)))
+        return (genre, Array(albums.filter { $0.Genres?.contains(genre) ?? false }.prefix(12)))
     }
 
     var body: some View {
@@ -140,7 +143,9 @@ struct AppleHomeView: View {
         .hidesMiniPlayerOnScroll()
         #endif
         #if DEBUG
-        .scrollPosition($testScroll)
+        // Only for the screenshot launch flag: a bound ScrollPosition is written while the
+        // user scrolls (and rubber-bands), which redrew the whole Home at every frame.
+        .modifier(TestScrollPosition(position: $testScroll))
         #endif
         .refreshable {
             await LibraryRefresh.shared.run {
@@ -152,7 +157,12 @@ struct AppleHomeView: View {
         }
         .libraryRefreshBanner()
         .task(id: "\(viewModel.albums.count)|\(viewModel.currentlyPlayingItem?.Id ?? "")|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(viewModel.favoriteAlbumIds.count)") {
+            // Not while a pull-to-refresh is springing back: changing the content then
+            // cancels the scroll view's rubber band.
+            await LibraryRefresh.shared.settled()
+            guard !Task.isCancelled else { return }
             topPicks = viewModel.homePicks()
+            topGenre = Self.makeTopGenre(from: viewModel.albums)
         }
         .task {
             await viewModel.fetchRecentlyPlayedAlbumsIfNeeded()
@@ -166,6 +176,7 @@ struct AppleHomeView: View {
         }
         // Playlists, and the mixes made again for a new day, user or library.
         .task(id: "\(viewModel.audioItems.count)|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")") {
+            await LibraryRefresh.shared.settled()
             await mixStore.refreshPlaylists(viewModel: viewModel)
             await mixStore.refreshMixes(viewModel: viewModel)
         }
@@ -185,6 +196,21 @@ struct AppleHomeView: View {
 
     #if DEBUG
     @State private var testScroll = ScrollPosition(idType: String.self)
+
+    /// Binds the scroll position only when the screenshot flag is on; otherwise the
+    /// ScrollView is left alone, as in release builds.
+    private struct TestScrollPosition: ViewModifier {
+        @Binding var position: ScrollPosition
+
+        @ViewBuilder
+        func body(content: Content) -> some View {
+            if UserDefaults.standard.bool(forKey: "provaHomeStatistiche") {
+                content.scrollPosition($position)
+            } else {
+                content
+            }
+        }
+    }
     #endif
 
     /// "Mix per te": Ampfin's own mixes, or the server plugins' playlists (Settings).
