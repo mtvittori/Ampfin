@@ -50,6 +50,8 @@ struct NowPlayingFullView: View {
     @State private var showAudioInfo: Bool = false
     @State private var panel: PlayerPanel = .artwork
     @State private var showTrackInfo = false
+    // Compact width is the iPhone: the bottom row sits lower there, as in Apple Music.
+    @Environment(\.horizontalSizeClass) private var sizeClass
     /// Page color and text color from the cover, as on the album pages.
     @State private var palette = HeroPalette.neutral
     private var fg: Color { palette.foreground }
@@ -219,10 +221,12 @@ struct NowPlayingFullView: View {
                     .padding(.top, 26)
                 #endif
 
+                // The view ignores the safe area, so this padding is measured from the screen's
+                // bottom edge: on iPhone 10 pt keeps the row just above the home indicator.
                 bottomRow
                     .padding(.horizontal, 44)
                     .padding(.top, 24)
-                    .padding(.bottom, max(geo.safeAreaInsets.bottom, 34) + 4)
+                    .padding(.bottom, sizeClass == .compact ? 10 : max(geo.safeAreaInsets.bottom, 34) + 4)
             }
         }
         .animation(.easeInOut(duration: 0.35), value: panel)
@@ -402,19 +406,22 @@ struct NowPlayingFullView: View {
     }
     #endif
 
+    // Three equal columns, so the output button is centred whatever its label is.
     private var bottomRow: some View {
         HStack {
             panelButton(.lyrics, systemImage: "quote.bubble", label: "Testo")
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
             #if os(iOS)
             OutputRouteButton(color: fg)
+                .frame(maxWidth: .infinity)
             #else
             AirPlayView()
                 .frame(width: 44, height: 44)
                 .tint(fg)
+                .frame(maxWidth: .infinity)
             #endif
-            Spacer()
             panelButton(.queue, systemImage: "list.bullet", label: "Coda")
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
