@@ -246,14 +246,16 @@ struct NowPlayingFullView: View {
         return !heartFlashOnly || heartFlash ? .pink : fg
     }
 
-    /// Pink for about 0.6 s after a tap, then eases back to the controls' colour.
+    /// Fades to pink with the fill (0.2 s), holds for half a second, then melts back to the
+    /// controls' colour over 0.8 s. The curves live on the heart's colour (see `heartButton`),
+    /// so the symbol's replace transition can't cut them short.
     private func flashHeart() {
         heartFlashTask?.cancel()
         heartFlash = true
         heartFlashTask = Task {
-            try? await Task.sleep(for: .milliseconds(600))
+            try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled else { return }
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.4)) { heartFlash = false }
+            heartFlash = false
         }
     }
 
@@ -291,6 +293,9 @@ struct NowPlayingFullView: View {
                     // Reduce Motion: the value never changes, so the bounce never fires.
                     .symbolEffect(.bounce, value: reduceMotion ? false : viewModel.isTrackFavorite(item.id))
                     .foregroundStyle(heartColor)
+                    // In fast, out slow; Reduce Motion: the colour just changes.
+                    .animation(reduceMotion ? nil : (heartFlash ? .easeOut(duration: 0.2) : .easeInOut(duration: 0.8)),
+                               value: heartFlash)
                     .frame(width: 40, height: 40)
                     .glassEffect(.regular.interactive(), in: .circle)
             }

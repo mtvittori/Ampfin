@@ -7,6 +7,7 @@
 #if os(iOS)
 import SwiftUI
 import Combine
+import CoreImage
 
 // MARK: - Geometry
 
@@ -69,17 +70,67 @@ private struct Slot: Identifiable {
     var id: String { album.Id }
 }
 
+// MARK: - Cover
+
+/// A cover's content: the picture and the sleeve's edge. It doesn't depend on the position,
+/// so it is `Equatable` and SwiftUI skips its body while the row moves; it is flattened into
+/// one texture (`drawingGroup`), so each frame only turns and moves that texture.
+private struct CoverArt: View, Equatable {
+    let albumId: String
+    let name: String
+    let side: CGFloat
+    /// Spines use the small picture; the one in front also gets the big one on top, once
+    /// the row has settled (no swap: the big one appears over the small one).
+    let baseURL: URL?
+    let sharpURL: URL?
+    let isCurrent: Bool
+    let onActivate: () -> Void
+
+    static func == (lhs: CoverArt, rhs: CoverArt) -> Bool {
+        lhs.albumId == rhs.albumId && lhs.side == rhs.side && lhs.baseURL == rhs.baseURL
+            && lhs.sharpURL == rhs.sharpURL && lhs.isCurrent == rhs.isCurrent && lhs.name == rhs.name
+    }
+
+    var body: some View {
+        ZStack {
+            CachedAsyncImage(url: baseURL, targetSize: 300) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle().fill(Color.gray.opacity(0.35))
+            }
+            if let sharpURL {
+                CachedAsyncImage(url: sharpURL, targetSize: side) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Color.clear
+                }
+            }
+        }
+        .frame(width: side, height: side)
+        .clipped()
+        .overlay { Rectangle().strokeBorder(Color.white.opacity(0.55), lineWidth: 1.2) }
+        .drawingGroup(opaque: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isCurrent ? "Copertina: \(name). Tocca per ascoltare" : "Album: \(name)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default) { onActivate() }
+    }
+}
+
 // MARK: - Stage
 
 /// The covers. It is `Animatable` on the position so that, while a fling or a tap animates
 /// the position, SwiftUI re-runs this body every frame with the in-between value and each
-/// cover follows a true path (a plain animation would just interpolate each modifier).
+/// cover follows a true path. What runs per frame is cheap on purpose: the window of albums,
+/// and for each cover a transform, an opacity and a shade. The pictures live in `CoverArt`.
 private struct CoverFlowStage: View, Animatable {
     var position: Double
     let albums: [AlbumItem]
     let layout: Layout
     let isOpen: Bool
-    let artwork: (String) -> URL?
+    /// The album at rest in front, which gets the big picture.
+    let sharpId: String?
+    let artwork: (String, Int) -> URL?
     let onActivate: (Int) -> Void
 
     var animatableData: Double {
@@ -87,10 +138,10 @@ private struct CoverFlowStage: View, Animatable {
         set { position = newValue }
     }
 
+    /// The spines shown plus one that fades in or out, no more.
     private var window: [Slot] {
         guard !albums.isEmpty else { return [] }
-        // One more than the spines shown, so the last one fades out instead of popping.
-        let reach = Layout.spinesPerSide + 2
+        let reach = Layout.spinesPerSide + 1
         let lo = max(0, Int(position.rounded(.down)) - reach)
         let hi = min(albums.count - 1, Int(position.rounded(.up)) + reach)
         guard lo <= hi else { return [] }
@@ -100,6 +151,7 @@ private struct CoverFlowStage: View, Animatable {
     var body: some View {
         let nearest = Int(position.rounded())
         ZStack(alignment: .topLeading) {
+            centerShadow
             ForEach(window) { slot in
                 cover(slot, isCurrent: slot.index == nearest)
             }
@@ -108,10 +160,25 @@ private struct CoverFlowStage: View, Animatable {
         .sensoryFeedback(.selection, trigger: nearest)
     }
 
+    /// The only shadow: one still shape under the centre, fading out as the row moves.
+    /// Shadows on every turning cover were the most expensive part of each frame.
+    private var centerShadow: some View {
+        let away = abs(position - position.rounded())
+        let strength = max(0, 1 - away * 8)
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(Color.black.opacity(strength))
+            .frame(width: layout.side, height: layout.side)
+            .shadow(color: .black.opacity(0.32 * strength), radius: 14, x: 0, y: 6)
+            .offset(x: layout.lead + (isOpen ? layout.openLead - layout.lead : 0),
+                    y: (layout.height - layout.side) / 2)
+            .animation(.soft(0.4), value: isOpen)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
     private func cover(_ slot: Slot, isCurrent: Bool) -> some View {
         let d = Double(slot.index) - position
         let t = min(abs(d), 1)
-        let side = layout.side
         let angle = (d >= 0 ? Layout.rightSign : -Layout.rightSign) * Layout.spineAngle * t
         let x = layout.leadingX(d: d)
         // Full strength up to the last spine, gone one album after.
@@ -119,37 +186,27 @@ private struct CoverFlowStage: View, Animatable {
         let hidden = isOpen && abs(d) > 0.5
         // With the record out the cover steps left; the spines drift away on their side.
         let shift: CGFloat = !isOpen ? 0 : (abs(d) <= 0.5 ? layout.openLead - layout.lead : (d > 0 ? 36 : -36))
+        let id = slot.album.Id
+        let index = slot.index
 
-        return CachedAsyncImage(url: artwork(slot.album.Id), targetSize: side) { image in
-            image.resizable().aspectRatio(contentMode: .fill)
-        } placeholder: {
-            Rectangle().fill(Color.gray.opacity(0.35))
-        }
-        .frame(width: side, height: side)
-        .clipped()
-        .overlay { Color.black.opacity(0.3 * t) }
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        // The sleeve's thin light edge.
-        .overlay {
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.55), lineWidth: 1.2)
-        }
-        .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0),
-                          anchor: d >= 0 ? .trailing : .leading, perspective: Layout.perspective)
-        .shadow(color: .black.opacity(0.28), radius: 9, x: 0, y: 4)
-        .offset(x: x + shift, y: (layout.height - side) / 2)
-        .opacity(hidden ? 0 : fade)
-        .animation(.soft(0.4), value: isOpen)
-        .zIndex(100 - abs(d))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label(for: slot.album, isCurrent: isCurrent))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { onActivate(slot.index) }
-    }
-
-    private func label(for album: AlbumItem, isCurrent: Bool) -> String {
-        let name = [album.Name, album.AlbumArtist].compactMap { $0 }.joined(separator: ", ")
-        return isCurrent ? "Copertina: \(name). Tocca per ascoltare" : "Album: \(name)"
+        return CoverArt(albumId: id,
+                        name: [slot.album.Name, slot.album.AlbumArtist].compactMap { $0 }.joined(separator: ", "),
+                        side: layout.side,
+                        baseURL: artwork(id, 300),
+                        sharpURL: id == sharpId ? artwork(id, 600) : nil,
+                        isCurrent: isCurrent,
+                        onActivate: { onActivate(index) })
+            .equatable()
+            // Darker the further from the front: a flat layer, not a filter.
+            .overlay { Rectangle().fill(Color.black.opacity(0.3 * t)) }
+            .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0),
+                              anchor: d >= 0 ? .trailing : .leading, perspective: Layout.perspective)
+            .offset(x: x + shift, y: (layout.height - layout.side) / 2)
+            .opacity(hidden ? 0 : fade)
+            .animation(.soft(0.4), value: isOpen)
+            .zIndex(100 - abs(d))
+            // Covers come and go while the row animates: no implicit fades on top of ours.
+            .transition(.identity)
     }
 }
 
@@ -174,7 +231,7 @@ private struct VinylDisc: View {
         ZStack {
             TimelineView(.animation(paused: spinningSince == nil)) { context in
                 let extra = spinningSince.map { context.date.timeIntervalSince($0) * degreesPerSecond } ?? 0
-                disc.rotationEffect(.degrees(baseAngle + extra))
+                disc.drawingGroup().rotationEffect(.degrees(baseAngle + extra))
             }
             // The light doesn't turn with the record.
             Circle()
@@ -202,7 +259,11 @@ private struct VinylDisc: View {
         }
         .animation(.easeInOut(duration: 0.25), value: loading)
         .frame(width: diameter, height: diameter)
-        .shadow(color: .black.opacity(0.3), radius: 10, x: 2, y: 5)
+        // The shadow sits on a still disc behind: on the turning one it was redrawn every frame.
+        .background {
+            Circle().fill(color)
+                .shadow(color: .black.opacity(0.3), radius: 10, x: 2, y: 5)
+        }
         .onChange(of: spinning, initial: true) { _, on in
             if on {
                 if spinningSince == nil { spinningSince = .now }
@@ -280,8 +341,13 @@ struct LandscapeCoverFlow: View {
 
     @State private var backdrop: Backdrop?
     @State private var previousBackdrop: Backdrop?
+    /// The album the row has settled on: it gets the big picture, the backdrop and the vinyl's color.
+    @State private var settledId: String?
+    /// The animation of a fling or jump ends here; the backdrop waits for it.
+    @State private var settleAt = Date.distantPast
     @State private var palette = HeroPalette.neutral
 
+    /// A tiny blurred bitmap, stretched over the screen: no live blur.
     struct Backdrop: Equatable {
         let id: String
         let image: PlatformImage
@@ -357,8 +423,8 @@ struct LandscapeCoverFlow: View {
                     vinyl(for: vinylAlbum, layout: layout)
                 }
                 CoverFlowStage(position: position, albums: albums, layout: layout,
-                               isOpen: openedId != nil,
-                               artwork: { viewModel.artworkURL(for: $0, size: 600) },
+                               isOpen: openedId != nil, sharpId: settledId,
+                               artwork: { viewModel.artworkURL(for: $0, size: $1) },
                                onActivate: { activate($0) })
             }
             .frame(width: width, height: height, alignment: .topLeading)
@@ -391,10 +457,10 @@ struct LandscapeCoverFlow: View {
     private func blurred(_ item: Backdrop, size: CGSize) -> some View {
         Image(platformImage: item.image)
             .resizable()
+            .interpolation(.high)
             .aspectRatio(contentMode: .fill)
             .frame(width: size.width, height: size.height)
             .clipped()
-            .blur(radius: 38, opaque: true)
     }
 
     // MARK: Vinyl
@@ -516,7 +582,9 @@ struct LandscapeCoverFlow: View {
                 let carried = Double(value.velocity.width) * 0.18 / Double(layout.pointsPerAlbum)
                 let target = min(max((position - carried).rounded(), 0), Double(max(albums.count - 1, 0)))
                 let distance = abs(target - position)
-                withAnimation(anim(.soft(0.35 + min(0.55, distance * 0.05)))) { position = target }
+                let duration = 0.35 + min(0.55, distance * 0.05)
+                settleAt = .now.addingTimeInterval(duration)
+                withAnimation(anim(.soft(duration))) { position = target }
             }
     }
 
@@ -544,7 +612,9 @@ struct LandscapeCoverFlow: View {
     private func jump(to index: Int) {
         let target = min(max(index, 0), albums.count - 1)
         let distance = abs(Double(target) - position)
-        withAnimation(anim(.soft(0.4 + min(0.4, distance * 0.05)))) { position = Double(target) }
+        let duration = 0.4 + min(0.4, distance * 0.05)
+        settleAt = .now.addingTimeInterval(duration)
+        withAnimation(anim(.soft(duration))) { position = Double(target) }
     }
 
     /// From VoiceOver: the cover opens the vinyl, any other element jumps to its album.
@@ -606,21 +676,57 @@ struct LandscapeCoverFlow: View {
         return LetterIndex.sections(ordered, name: name).flatMap(\.items)
     }
 
-    /// The blurred background and the vinyl's color follow the front album. The short wait
-    /// keeps a fast scrub from loading every cover it passes.
+    /// The backdrop, the vinyl's color and the big picture follow the album the row has settled
+    /// on: not while a finger is down or the row is still gliding, and 250 ms after. A slow
+    /// scrub used to start a new blurred cross-fade at every album it crossed.
     private func loadBackdrop() async {
         guard let album = currentAlbum else { return }
-        try? await Task.sleep(for: .milliseconds(150))
-        guard !Task.isCancelled,
-              let url = viewModel.artworkURL(for: album.Id, size: 600),
+        let first = backdrop == nil
+        if !first {
+            try? await Task.sleep(for: .milliseconds(250))
+            while !Task.isCancelled && (dragStart != nil || Date.now < settleAt) {
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+        }
+        guard !Task.isCancelled else { return }
+        settledId = album.Id
+        guard let url = viewModel.artworkURL(for: album.Id, size: 300),
               let image = await ImageLoader.shared.firstImage(from: [url]),
               !Task.isCancelled else { return }
         let colors = HeroPalette(image: image)
+        let blurred = await Task.detached(priority: .utility) { BackdropBitmap.make(from: image, id: album.Id) }.value
+        guard !Task.isCancelled, let blurred else { return }
         previousBackdrop = backdrop
-        backdrop = Backdrop(id: album.Id, image: image)
+        backdrop = Backdrop(id: album.Id, image: blurred)
         if let colors {
             withAnimation(.easeInOut(duration: 0.4)) { palette = colors }
         }
+    }
+}
+
+/// The blurred backdrop, made once per album: the cover shrunk to 48 px and blurred a little,
+/// then stretched by the GPU, which blurs it further. Cheap to make, free to show.
+private enum BackdropBitmap {
+    private nonisolated(unsafe) static let context = CIContext()
+    private nonisolated(unsafe) static let cache = NSCache<NSString, UIImage>()
+
+    nonisolated static func make(from image: UIImage, id: String) -> UIImage? {
+        if let cached = cache.object(forKey: id as NSString) { return cached }
+        guard let cgImage = image.cgImage else { return nil }
+        let size = 48
+        guard let small = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        small.interpolationQuality = .medium
+        small.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
+        guard let reduced = small.makeImage() else { return nil }
+        let rect = CGRect(x: 0, y: 0, width: size, height: size)
+        let blurred = CIImage(cgImage: reduced).clampedToExtent()
+            .applyingGaussianBlur(sigma: 2.5).cropped(to: rect)
+        guard let output = context.createCGImage(blurred, from: rect) else { return nil }
+        let result = UIImage(cgImage: output)
+        cache.setObject(result, forKey: id as NSString)
+        return result
     }
 }
 #endif
