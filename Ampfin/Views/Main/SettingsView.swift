@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 struct SettingsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
@@ -26,6 +27,9 @@ struct SettingsView: View {
     @State private var showExporter = false
     @State private var showImporter = false
     @State private var confirmRestore = false
+    #if os(iOS)
+    @State private var currentIcon = UIApplication.shared.alternateIconName
+    #endif
 
     // Preset colors
     private let presetColors: [(String, Color)] = [
@@ -68,6 +72,7 @@ struct SettingsView: View {
 
             Section {
                 pageLink("Aspetto", icon: "paintpalette.fill", color: .pink) {
+                    appIconSection
                     accentSection
                     glassSection
                     topBarSection
@@ -224,6 +229,55 @@ struct SettingsView: View {
     }
 
     #if os(iOS)
+    /// Alternate icons: nil name is the primary icon. Previews live in Assets.xcassets as IconPreview-*.
+    private static let appIcons: [(name: String?, label: String, preview: String)] = [
+        (nil, "Classica", "IconPreview-Classica"),
+        ("AppIcon-Medusa", "Medusa", "IconPreview-Medusa"),
+        ("AppIcon-Onda", "Onda", "IconPreview-Onda"),
+        ("AppIcon-Vinile", "Vinile", "IconPreview-Vinile"),
+        ("AppIcon-Cuffie", "Cuffie", "IconPreview-Cuffie"),
+    ]
+
+    @ViewBuilder private var appIconSection: some View {
+        if UIApplication.shared.supportsAlternateIcons {
+            Section {
+                ForEach(Self.appIcons, id: \.label) { icon in
+                    Button {
+                        setAppIcon(icon.name)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(icon.preview)
+                                .resizable()
+                                .frame(width: 60, height: 60)
+                                .clipShape(RoundedRectangle(cornerRadius: 60 * 0.22, style: .continuous))
+                            Text(icon.label)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if currentIcon == icon.name {
+                                Image(systemName: "checkmark")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Icona dell'app")
+            }
+        }
+    }
+
+    private func setAppIcon(_ name: String?) {
+        guard name != currentIcon else { return }
+        UIApplication.shared.setAlternateIconName(name) { error in
+            if let error {
+                Logger(subsystem: "Ampfin", category: "AppIcon").error("setAlternateIconName failed: \(error.localizedDescription)")
+            }
+            DispatchQueue.main.async { currentIcon = UIApplication.shared.alternateIconName }
+        }
+    }
+
     @ViewBuilder private var topBarSection: some View {
         Section {
             Picker("Barra in alto", selection: $topBarStyle) {

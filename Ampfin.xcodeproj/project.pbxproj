@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1C0DE002F8A0002000BB000 /* AppIcon-Medusa.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE002F8A0001000AA000 /* AppIcon-Medusa.icon */; };
+		A1C0DE012F8A0002000BB001 /* AppIcon-Onda.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE012F8A0001000AA001 /* AppIcon-Onda.icon */; };
+		A1C0DE022F8A0002000BB002 /* AppIcon-Vinile.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE022F8A0001000AA002 /* AppIcon-Vinile.icon */; };
+		A1C0DE032F8A0002000BB003 /* AppIcon-Cuffie.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1C0DE032F8A0001000AA003 /* AppIcon-Cuffie.icon */; };
 		2672BF2F2E59BBEE00466EE2 /* ampfin_icon_glass.icon in Resources */ = {isa = PBXBuildFile; fileRef = 2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */; };
 		267F6F282F7034F200A5C2DC /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 267F6F272F7034F200A5C2DC /* WidgetKit.framework */; };
 		267F6F2A2F7034F200A5C2DC /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 267F6F292F7034F200A5C2DC /* SwiftUI.framework */; };
@@ -52,6 +56,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A1C0DE002F8A0001000AA000 /* AppIcon-Medusa.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon-Medusa.icon; sourceTree = "<group>"; };
+		A1C0DE012F8A0001000AA001 /* AppIcon-Onda.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon-Onda.icon; sourceTree = "<group>"; };
+		A1C0DE022F8A0001000AA002 /* AppIcon-Vinile.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon-Vinile.icon; sourceTree = "<group>"; };
+		A1C0DE032F8A0001000AA003 /* AppIcon-Cuffie.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon-Cuffie.icon; sourceTree = "<group>"; };
 		2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = ampfin_icon_glass.icon; sourceTree = "<group>"; };
 		267E9BC02DFB0E1800F06ED9 /* Ampfin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ampfin.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		267E9BCE2DFB0E1A00F06ED9 /* AmpfinTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AmpfinTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -163,6 +171,10 @@
 				267F6F262F7034F200A5C2DC /* Frameworks */,
 				267E9BC12DFB0E1800F06ED9 /* Products */,
 				2672BF2E2E59BBEE00466EE2 /* ampfin_icon_glass.icon */,
+				A1C0DE002F8A0001000AA000 /* AppIcon-Medusa.icon */,
+				A1C0DE012F8A0001000AA001 /* AppIcon-Onda.icon */,
+				A1C0DE022F8A0001000AA002 /* AppIcon-Vinile.icon */,
+				A1C0DE032F8A0001000AA003 /* AppIcon-Cuffie.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -335,6 +347,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				2672BF2F2E59BBEE00466EE2 /* ampfin_icon_glass.icon in Resources */,
+				A1C0DE002F8A0002000BB000 /* AppIcon-Medusa.icon in Resources */,
+				A1C0DE012F8A0002000BB001 /* AppIcon-Onda.icon in Resources */,
+				A1C0DE022F8A0002000BB002 /* AppIcon-Vinile.icon in Resources */,
+				A1C0DE032F8A0002000BB003 /* AppIcon-Cuffie.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -534,6 +550,7 @@
 		267E9BE32DFB0E1A00F06ED9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIcon-Medusa AppIcon-Onda AppIcon-Vinile AppIcon-Cuffie";
 				ASSETCATALOG_COMPILER_APPICON_NAME = ampfin_icon_glass;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -578,6 +595,7 @@
 		267E9BE42DFB0E1A00F06ED9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIcon-Medusa AppIcon-Onda AppIcon-Vinile AppIcon-Cuffie";
 				ASSETCATALOG_COMPILER_APPICON_NAME = ampfin_icon_glass;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;

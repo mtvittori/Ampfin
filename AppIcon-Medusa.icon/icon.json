@@ -1,0 +1,151 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:1.00000,0.69412,0.30588,1.00000",
+          "extended-srgb:1.00000,0.35294,0.07059,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 0.75
+          }
+        }
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.17255,0.16863,0.19216,1.00000",
+          "extended-srgb:0.06667,0.06667,0.07843,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 0.75
+          }
+        }
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "bell",
+          "image-name": "bell.svg",
+          "glass": true,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "extended-srgb:1.00000,0.76078,0.47843,1.00000",
+                  "extended-srgb:1.00000,0.41569,0.10196,1.00000"
+                ],
+                "orientation": {
+                  "start": {
+                    "x": 0.5,
+                    "y": 0
+                  },
+                  "stop": {
+                    "x": 0.5,
+                    "y": 0.75
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.4
+      },
+      "specular": true
+    },
+    {
+      "layers": [
+        {
+          "name": "tentacles",
+          "image-name": "tentacles.svg",
+          "glass": true,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "extended-srgb:1.00000,0.76078,0.47843,1.00000",
+                  "extended-srgb:1.00000,0.41569,0.10196,1.00000"
+                ],
+                "orientation": {
+                  "start": {
+                    "x": 0.5,
+                    "y": 0
+                  },
+                  "stop": {
+                    "x": 0.5,
+                    "y": 0.75
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      },
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}
