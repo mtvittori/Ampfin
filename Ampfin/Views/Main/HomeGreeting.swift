@@ -1,7 +1,8 @@
 // HomeGreeting.swift
 // The personal line at the top of the Home, under its title: a short sentence about the user's
 // music (an album's anniversary, new albums to hear, the week's top artist, a mix that's ready…).
-// The navigation subtitle stays the date. Built only from data the app has already loaded.
+// With the "Data" style the navigation subtitle is the date instead, and no line is shown.
+// Built only from data the app has already loaded.
 
 import SwiftUI
 
@@ -230,14 +231,15 @@ final class HomeGreeting: ObservableObject {
 }
 
 #if os(iOS)
-/// Puts the Home's toolbar on a view with the date as subtitle, and keeps the greeting
-/// fresh: when the Home appears, every hour, and when its inputs change.
-/// The greeting itself is the first row of AppleHomeView.
+/// Puts the Home's toolbar on a view, with the date as subtitle for the "Data" style (none
+/// for "Messaggio per te", whose line is the first row of AppleHomeView), and keeps the
+/// greeting fresh: when the Home appears, every hour, and when its inputs change.
 private struct HomeToolbarModifier: ViewModifier {
     @ObservedObject var viewModel: JellyfinViewModel
     @ObservedObject private var greeting = HomeGreeting.shared
     @ObservedObject private var stats = ScrobbleStatsStore.shared
     @ObservedObject private var mixStore = MixStore.shared
+    @AppStorage(HomeSubtitleStyle.storageKey) private var style = HomeSubtitleStyle.message.rawValue
 
     private var inputs: String {
         "\(viewModel.albums.count)|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")|\(stats.todayCount)|\(mixStore.mixes.count)"
@@ -245,7 +247,8 @@ private struct HomeToolbarModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .iOSToolbar(viewModel: viewModel, title: "Home", subtitle: greeting.dateLine)
+            .iOSToolbar(viewModel: viewModel, title: "Home",
+                        subtitle: style == HomeSubtitleStyle.date.rawValue ? greeting.dateLine : nil)
             .task(id: inputs) { greeting.refresh(viewModel: viewModel) }
             // Wakes at every full hour; leaving the Home cancels the sleep.
             .task {
