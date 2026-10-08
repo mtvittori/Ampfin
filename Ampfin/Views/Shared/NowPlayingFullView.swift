@@ -55,6 +55,11 @@ struct NowPlayingFullView: View {
     /// Page color and text color from the cover, as on the album pages.
     @State private var palette = HeroPalette.neutral
     private var fg: Color { palette.foreground }
+    /// Option in Settings → Aspetto: the heart turns pink only for a moment after a tap.
+    @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var heartFlash = false
+    @State private var heartFlashTask: Task<Void, Never>?
     #if os(iOS)
     @ObservedObject private var systemVolume = SystemVolume.shared
     #endif
@@ -236,6 +241,22 @@ struct NowPlayingFullView: View {
         .environment(\.colorScheme, palette.isLight ? .light : .dark)
     }
 
+    private var heartColor: Color {
+        guard viewModel.isTrackFavorite(item.id) else { return fg }
+        return !heartFlashOnly || heartFlash ? .pink : fg
+    }
+
+    /// Pink for about 0.6 s after a tap, then eases back to the controls' colour.
+    private func flashHeart() {
+        heartFlashTask?.cancel()
+        heartFlash = true
+        heartFlashTask = Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.4)) { heartFlash = false }
+        }
+    }
+
     private var titleRow: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
@@ -260,13 +281,16 @@ struct NowPlayingFullView: View {
             Spacer(minLength: 8)
 
             Button {
+                let wasFavorite = viewModel.isTrackFavorite(item.id)
                 viewModel.toggleFavoriteTrack(item.id)
+                if heartFlashOnly && !wasFavorite { flashHeart() }
             } label: {
                 Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
                     .font(.system(size: 17, weight: .semibold))
                     .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: viewModel.isTrackFavorite(item.id))
-                    .foregroundStyle(viewModel.isTrackFavorite(item.id) ? Color.pink : fg)
+                    // Reduce Motion: the value never changes, so the bounce never fires.
+                    .symbolEffect(.bounce, value: reduceMotion ? false : viewModel.isTrackFavorite(item.id))
+                    .foregroundStyle(heartColor)
                     .frame(width: 40, height: 40)
                     .glassEffect(.regular.interactive(), in: .circle)
             }
@@ -1086,3 +1110,8 @@ private struct HiddenVolumeView: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 #endif
+
+/// Settings → Aspetto: the player's heart turns pink only while it animates. In the settings backup.
+enum HeartFlashSettings {
+    static let storageKey = "heartFlashOnly"
+}

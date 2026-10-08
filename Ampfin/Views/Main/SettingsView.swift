@@ -21,6 +21,7 @@ struct SettingsView: View {
     @AppStorage(CoverFlowSettings.resumeKey) private var coverFlowResumesPlaying = true
     @AppStorage(HeroCoverSettings.storageKey) private var heroCoverBelowIsland = false
     @AppStorage(JellyfinViewModel.hiResTo48kKey) private var hiResTo48k = true
+    @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -73,6 +74,7 @@ struct SettingsView: View {
                     albumBackgroundSection
                     heroCoverSection
                     nowPlayingBackgroundSection
+                    heartSection
                 }
                 pageLink("Home", icon: "house.fill", color: .orange) {
                     homeSubtitleSection
@@ -328,6 +330,16 @@ struct SettingsView: View {
             Text("Schermata Play")
         } footer: {
             Text("Lo sfondo della copertina nella schermata Play, sfocata o nitida.")
+        }
+    }
+
+    @ViewBuilder private var heartSection: some View {
+        Section {
+            Toggle("Cuore rosa solo nell'animazione", isOn: $heartFlashOnly)
+        } header: {
+            Text("Cuore")
+        } footer: {
+            Text("Toccando il cuore nel player si colora di rosa per un attimo e poi torna del colore dei comandi.")
         }
     }
     #endif
