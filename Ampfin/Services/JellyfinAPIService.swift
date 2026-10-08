@@ -198,7 +198,7 @@ class JellyfinAPIService {
     func fetchRecentAddedAlbums() async throws -> [AlbumItem] {
         let libraryId = try await fetchMusicLibraryId()
         // DateCreated is Jellyfin's "date added" sort; DateAdded is not a valid SortBy value
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated&SortBy=DateCreated,SortName&SortOrder=Descending&Limit=20"
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending&Limit=20"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -220,7 +220,7 @@ class JellyfinAPIService {
     
     func fetchAlbums(from libraryId: String) async throws -> [AlbumItem] {
         // Newest first by DateCreated (Jellyfin's "date added"); DateAdded is not a valid SortBy value
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated&SortBy=DateCreated,SortName&SortOrder=Descending"
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending"
         let response: AlbumResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -371,6 +371,12 @@ class JellyfinAPIService {
     /// Returns a transcoded stream URL with the specified max bitrate (in kbps).
     func transcodedStreamURL(for itemId: String, maxBitrate: Int) -> URL? {
         return URL(string: "\(serverUrl)/Audio/\(itemId)/stream?audioBitRate=\(maxBitrate * 1000)&audioCodec=aac&static=false&api_key=\(token)")
+    }
+
+    /// Lossless FLAC converted by the server to 48 kHz (24 bit at most, stereo): for hi-res
+    /// files, which download in a fraction of the time. No deviceId: the other stream URLs have none.
+    func downsampledFlacStreamURL(for itemId: String) -> URL? {
+        return URL(string: "\(serverUrl)/Audio/\(itemId)/stream.flac?static=false&audioCodec=flac&container=flac&audioSampleRate=48000&maxAudioSampleRate=48000&maxAudioBitDepth=24&audioChannels=2&api_key=\(token)")
     }
 
     // MARK: - Generic Fetch Helper

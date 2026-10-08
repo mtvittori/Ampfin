@@ -15,10 +15,12 @@ struct SettingsView: View {
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
     @AppStorage(MixSource.topPicksKey) private var mixesInTopPicks = true
     @AppStorage(ScrobbleStatsStore.homeKey) private var showScrobbleStats = false
+    @AppStorage(HomeSubtitleStyle.storageKey) private var homeSubtitleStyle = HomeSubtitleStyle.message.rawValue
     @AppStorage(LetterIndexStyle.storageKey) private var letterIndexStyle = LetterIndexStyle.classic.rawValue
     @AppStorage(CoverFlowSettings.storageKey) private var landscapeCoverFlow = false
     @AppStorage(CoverFlowSettings.resumeKey) private var coverFlowResumesPlaying = true
     @AppStorage(HeroCoverSettings.storageKey) private var heroCoverBelowIsland = false
+    @AppStorage(JellyfinViewModel.hiResTo48kKey) private var hiResTo48k = true
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -73,6 +75,7 @@ struct SettingsView: View {
                     nowPlayingBackgroundSection
                 }
                 pageLink("Home", icon: "house.fill", color: .orange) {
+                    homeSubtitleSection
                     mixSection
                     statsSection
                 }
@@ -253,6 +256,18 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder private var homeSubtitleSection: some View {
+        Section {
+            Picker("Sottotitolo della Home", selection: $homeSubtitleStyle) {
+                ForEach(HomeSubtitleStyle.allCases) { style in
+                    Text(style.label).tag(style.rawValue)
+                }
+            }
+        } footer: {
+            Text("Messaggio per te: una frase sulla tua musica (un anniversario, le novità da ascoltare, i tuoi ascolti della settimana…), che cambia durante la giornata. Con la barra Ampfin, toccala per leggerne un'altra.")
+        }
+    }
+
     @ViewBuilder private var mixSection: some View {
         Section {
             Picker("Mix consigliati", selection: $mixSource) {
@@ -346,10 +361,12 @@ struct SettingsView: View {
                 }
             }
             #endif
+
+            Toggle("Alta risoluzione a 48 kHz", isOn: $hiResTo48k)
         } header: {
             Text("Qualità streaming")
         } footer: {
-            Text("Seleziona la qualità di riproduzione. \"Originale\" trasmette senza conversione.")
+            Text("Seleziona la qualità di riproduzione. \"Originale\" trasmette senza conversione. I brani oltre i 48 kHz arrivano convertiti a 48 kHz, sempre senza perdita (FLAC): partono prima e su iPhone la differenza non si sente, l'uscita del telefono lavora a 48 kHz.")
         }
     }
 

@@ -14,6 +14,8 @@ final class AudioPlayerManager: ObservableObject {
     @Published private(set) var currentOutputDevice: String = ""
     @Published private(set) var currentCodec: String = ""
     @Published private(set) var isDirectStream: Bool = true
+    /// The song is played through the server's 48 kHz lossless conversion (hi-res setting).
+    @Published private(set) var isDownsampledStream: Bool = false
 
     // MARK: - Device Output Info (real hardware values)
     @Published private(set) var deviceSampleRate: Double = 0        // Hz (actual hardware)
@@ -86,7 +88,7 @@ final class AudioPlayerManager: ObservableObject {
         return Array(playQueue.dropFirst(index + 1))
     }
 
-    private var streamURLProvider: ((String) -> URL?)?
+    private var streamURLProvider: ((AudioItem) -> URL?)?
     var artworkURLProvider: ((String, Int) -> URL?)?
 
     /// Reports to the Jellyfin server that an item was played (updates its LastPlayedDate,
@@ -112,7 +114,7 @@ final class AudioPlayerManager: ObservableObject {
     private var interruptionObserver: NSObjectProtocol?
     #endif
 
-    init(streamURLProvider: @escaping (String) -> URL?, artworkURLProvider: ((String, Int) -> URL?)? = nil) {
+    init(streamURLProvider: @escaping (AudioItem) -> URL?, artworkURLProvider: ((String, Int) -> URL?)? = nil) {
         self.streamURLProvider = streamURLProvider
         self.artworkURLProvider = artworkURLProvider
         eqManager.audioEngine.mainMixerNode.outputVolume = volume
@@ -125,7 +127,8 @@ final class AudioPlayerManager: ObservableObject {
             // Not while a song is still loading: there is nothing queued to restart.
             guard let self, self.isPlaying, self.isQueued, !self.isInterrupted else { return }
             if !self.startPlayerNode() {
-                self.markPausedAfterFailedStart()
+                // An output change (not a song that can't play): paused as before, no toast.
+                self.markPausedAfterFailedStart(silent: true)
             }
         }
         #if os(iOS)
@@ -137,7 +140,7 @@ final class AudioPlayerManager: ObservableObject {
     // MARK: - Playback
 
     func play(item: AudioItem, in queue: [AudioItem]) {
-        guard let url = streamURLProvider?(item.Id) else {
+        guard let url = streamURLProvider?(item) else {
             print("Errore: URL per lo streaming non valido.")
             return
         }
@@ -153,6 +156,7 @@ final class AudioPlayerManager: ObservableObject {
         stop()
 
         cachedNowPlayingArtworkImage = nil
+        isDownsampledStream = Self.isDownsampled(url)
         currentlyPlayingItem = item
         wantsToPlay = true
         isPlaying = true
@@ -199,14 +203,76 @@ final class AudioPlayerManager: ObservableObject {
         cache.fetch(url, key: key, urgent: true) { [weak self] file in
             // Superseded by a newer play request or by stop: the cache keeps the file, nothing plays.
             guard let self, self.loadGeneration == generation else { return }
-            self.isLoading = false
             guard let file else {
+                self.isLoading = false
                 print("Download failed for \(item.Name)")
+                // Said only if the user still wanted it: a pause during the download is not a failure.
+                if self.wantsToPlay {
+                    self.showPlaybackError("Brano non disponibile sul server, riprova tra poco",
+                                           systemImage: "exclamationmark.icloud")
+                }
                 self.isPlaying = false
                 self.wantsToPlay = false
                 return
             }
-            self.fileLoaded(file)
+            guard Self.isDownsampled(url) else {
+                self.isLoading = false
+                self.fileLoaded(file)
+                return
+            }
+            // The server's live FLAC conversion writes no length in the header: fixed off the
+            // main thread (it decodes the file once), still "loading" meanwhile.
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                Self.repairFLACLength(at: file)
+                DispatchQueue.main.async {
+                    guard let self, self.loadGeneration == generation else { return }
+                    self.isLoading = false
+                    self.fileLoaded(file)
+                }
+            }
+        }
+    }
+
+    /// The toast of the app, for a song that can't start. Always from the main actor.
+    private func showPlaybackError(_ text: String, systemImage: String) {
+        Task { @MainActor in
+            QueueFeedback.shared.show(text, systemImage: systemImage)
+        }
+    }
+
+    /// Stream URLs of the 48 kHz conversion carry `maxAudioSampleRate` (see JellyfinAPIService).
+    private static func isDownsampled(_ url: URL) -> Bool {
+        !url.isFileURL && (url.query ?? "").contains("maxAudioSampleRate=")
+    }
+
+    /// Jellyfin transcodes to FLAC into a pipe, so the header says "0 samples" and AVAudioFile
+    /// reports length 0. Counts the frames by decoding once and writes the count into
+    /// STREAMINFO (36 bits at byte 21 low nibble + bytes 22-25). Does nothing if already set.
+    private static func repairFLACLength(at url: URL) {
+        guard let handle = try? FileHandle(forUpdating: url) else { return }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 26), head.count == 26,
+              head.prefix(4) == Data("fLaC".utf8) else { return }
+        let bytes = [UInt8](head)
+        guard bytes[21] & 0x0F == 0, bytes[22...25].allSatisfy({ $0 == 0 }) else { return }
+        guard let file = try? AVAudioFile(forReading: url),
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 65536) else { return }
+        var total: Int64 = 0
+        // The decoder ends with an end-of-file error: that is the normal way out.
+        while (try? file.read(into: buffer)) != nil, buffer.frameLength > 0 {
+            total += Int64(buffer.frameLength)
+        }
+        guard total > 0, total < (1 << 36) else { return }
+        let patch: [UInt8] = [
+            (bytes[21] & 0xF0) | UInt8((total >> 32) & 0x0F),
+            UInt8((total >> 24) & 0xFF), UInt8((total >> 16) & 0xFF),
+            UInt8((total >> 8) & 0xFF), UInt8(total & 0xFF),
+        ]
+        do {
+            try handle.seek(toOffset: 21)
+            try handle.write(contentsOf: Data(patch))
+        } catch {
+            print("Could not write the FLAC length: \(error)")
         }
     }
 
@@ -214,6 +280,9 @@ final class AudioPlayerManager: ObservableObject {
     /// paused while loading, it stays ready so that play starts it at once.
     private func fileLoaded(_ file: URL) {
         guard openFile(at: file) else {
+            if wantsToPlay {
+                showPlaybackError("Impossibile riprodurre questo brano", systemImage: "exclamationmark.triangle")
+            }
             isPlaying = false
             wantsToPlay = false
             return
@@ -227,7 +296,7 @@ final class AudioPlayerManager: ObservableObject {
     /// automatic advance start without waiting.
     private func prefetchNext() {
         guard let next = upNext.first,
-              let url = streamURLProvider?(next.Id), !url.isFileURL else { return }
+              let url = streamURLProvider?(next), !url.isFileURL else { return }
         let cache = AudioStreamCache.shared
         cache.prefetch(url, key: cache.key(itemId: next.Id, url: url))
     }
@@ -553,7 +622,10 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     /// The engine would not start: show paused, so the next tap tries again.
-    private func markPausedAfterFailedStart() {
+    private func markPausedAfterFailedStart(silent: Bool = false) {
+        if !silent && wantsToPlay {
+            showPlaybackError("Impossibile riprodurre questo brano", systemImage: "exclamationmark.triangle")
+        }
         wantsToPlay = false
         isPlaying = false
         stopTimeUpdater()
@@ -653,6 +725,7 @@ final class AudioPlayerManager: ObservableObject {
         stopTimeUpdater()
         currentAudioFile = nil
         currentlyPlayingItem = nil
+        isDownsampledStream = false
         isPlaying = false
         currentTime = 0
         seekOffset = 0
@@ -817,7 +890,7 @@ final class AudioPlayerManager: ObservableObject {
         } else {
             currentCodec = ""
         }
-        isDirectStream = true
+        isDirectStream = !isDownsampledStream
     }
 
     private func updateBitrateAndSampleRate() {
@@ -836,7 +909,8 @@ final class AudioPlayerManager: ObservableObject {
                 if currentBitrate == 0, let streamBitrate = audioStream.BitRate, streamBitrate > 0 {
                     currentBitrate = Double(streamBitrate) / 1000.0
                 }
-                if let sr = audioStream.SampleRate, sr > 0 {
+                // Converted to 48 kHz: the rate below comes from the file actually playing.
+                if !isDownsampledStream, let sr = audioStream.SampleRate, sr > 0 {
                     currentSampleRate = Double(sr)
                 }
             }

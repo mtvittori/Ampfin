@@ -180,9 +180,7 @@ struct ContentView: View {
                         NavigationStack {
                             AppleHomeView()
                                 .albumColorBackground()
-                                .iOSToolbar(viewModel: viewModel,
-                                            title: "Home",
-                                            subtitle: Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                                .homeToolbar(viewModel: viewModel)
                         }
                     }
                 }
@@ -428,6 +426,7 @@ private struct IOSToolbarModifier: ViewModifier {
     @ObservedObject var viewModel: JellyfinViewModel
     var title: String? = nil
     var subtitle: String? = nil
+    var onSubtitleTap: (() -> Void)? = nil
     @ObservedObject private var colorManager = AccentColorManager.shared
 
     // Same size as iOS 26's own toolbar groups: 44 pt tall, a 48 pt slot per icon.
@@ -450,7 +449,7 @@ private struct IOSToolbarModifier: ViewModifier {
                 .navigationTitle(title ?? "amplifin")
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaBar(edge: .top) {
-                    AmpfinTopBar(viewModel: viewModel, title: title ?? "amplifin", subtitle: subtitle)
+                    AmpfinTopBar(viewModel: viewModel, title: title ?? "amplifin", subtitle: subtitle, onSubtitleTap: onSubtitleTap)
                 }
         } else {
             systemBar(content)
@@ -495,6 +494,8 @@ private struct AmpfinTopBar: View {
     @ObservedObject var viewModel: JellyfinViewModel
     let title: String
     let subtitle: String?
+    /// A tap on the subtitle (the Home cycles its messages); the system bar can't take one.
+    var onSubtitleTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -509,6 +510,9 @@ private struct AmpfinTopBar: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.25), value: subtitle)
+                        .onTapGesture { onSubtitleTap?() }
                 }
             }
             Spacer(minLength: 8)
@@ -553,8 +557,9 @@ private struct OptionalSubtitle: ViewModifier {
 }
 
 extension View {
-    func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil, subtitle: String? = nil) -> some View {
-        modifier(IOSToolbarModifier(viewModel: viewModel, title: title, subtitle: subtitle))
+    func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil, subtitle: String? = nil,
+                    onSubtitleTap: (() -> Void)? = nil) -> some View {
+        modifier(IOSToolbarModifier(viewModel: viewModel, title: title, subtitle: subtitle, onSubtitleTap: onSubtitleTap))
     }
 }
 

@@ -111,6 +111,12 @@ class JellyfinViewModel: ObservableObject {
         }
     }
 
+    /// "Alta risoluzione a 48 kHz" in Settings, on unless the user turns it off.
+    static let hiResTo48kKey = "hiResTo48k"
+    static var hiResTo48kEnabled: Bool {
+        UserDefaults.standard.object(forKey: hiResTo48kKey) as? Bool ?? true
+    }
+
     @Published var streamQualityWifi: StreamQuality = .original {
         didSet { UserDefaults.standard.set(streamQualityWifi.rawValue, forKey: StorageKeys.streamQualityWifi) }
     }
@@ -942,7 +948,8 @@ class JellyfinViewModel: ObservableObject {
         Task { await SettingsBackup.shared.connect(api: api) }
         let downloads = DownloadManager.shared
         self.playerManager = AudioPlayerManager(
-            streamURLProvider: { [weak self] itemId in
+            streamURLProvider: { [weak self] item in
+                let itemId = item.Id
                 // Prefer local file if downloaded
                 if let localURL = downloads.localURL(for: itemId) {
                     return localURL
@@ -950,6 +957,11 @@ class JellyfinViewModel: ObservableObject {
                 // Check quality setting based on network type
                 if let quality = self?.currentStreamQuality(), let bitrate = quality.bitrate {
                     return api.transcodedStreamURL(for: itemId, maxBitrate: bitrate)
+                }
+                // Original quality: hi-res above 48 kHz arrives converted (still lossless), if
+                // the setting is on. Without the rate in the media info the original is used.
+                if Self.hiResTo48kEnabled, item.isAbove48k {
+                    return api.downsampledFlacStreamURL(for: itemId)
                 }
                 return api.streamURL(for: itemId)
             },

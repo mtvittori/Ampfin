@@ -332,9 +332,10 @@ struct NowPlayingFullView: View {
                     viewModel.playerManager.refreshAudioOutputInfo()
                     showAudioInfo = true
                 } label: {
-                    Label(item.isLossless ? "Lossless" : (item.MediaSources?.first?.Container?.uppercased() ?? "Audio"),
-                          systemImage: "waveform")
+                    Label(qualityText, systemImage: "waveform")
                         .font(.footnote.weight(.medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .foregroundStyle(fg.opacity(0.85))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
@@ -344,6 +345,13 @@ struct NowPlayingFullView: View {
                 .accessibilityLabel("Info audio")
             }
         }
+    }
+
+    /// "FLAC · 24 bit · 96 kHz → 48 kHz": the original's quality, and the conversion if it is on.
+    /// Without media info it falls back to the old "Lossless" / container name.
+    private var qualityText: String {
+        item.qualityLabel(convertedTo48k: viewModel.playerManager?.isDownsampledStream ?? false)
+            ?? (item.isLossless ? "Lossless" : (item.MediaSources?.first?.Container?.uppercased() ?? "Audio"))
     }
 
     private var transportRow: some View {
