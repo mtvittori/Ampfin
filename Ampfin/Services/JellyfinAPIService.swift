@@ -139,10 +139,11 @@ class JellyfinAPIService {
     
     /// Fetches recently played tracks for the current user
     func fetchRecentlyPlayedTracks() async throws -> [AudioItem] {
-        let libraryId = try await fetchMusicLibraryId()
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
-        let response: AudioResponse = try await fetch(endpoint: endpoint)
-        return response.Items
+        let libraryIds = try await fetchMusicLibraryIds()
+        let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
+        }
+        return Array(Self.mostRecentlyPlayed(tracks).prefix(20))
     }
 
     // MARK: - Playback reporting
@@ -196,39 +197,91 @@ class JellyfinAPIService {
     /// Fetches recently added albums (ordered by DateCreated descending).
     /// Named as requested: fetchRecentAddedAlbums()
     func fetchRecentAddedAlbums() async throws -> [AlbumItem] {
-        let libraryId = try await fetchMusicLibraryId()
+        let libraryIds = try await fetchMusicLibraryIds()
         // DateCreated is Jellyfin's "date added" sort; DateAdded is not a valid SortBy value
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending&Limit=20"
-        let response: AlbumResponse = try await fetch(endpoint: endpoint)
-        return response.Items
+        let albums = try await fetchMerged(AlbumResponse.self, from: libraryIds) { id in
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending&Limit=20"
+        }
+        return Array(Self.newestAdded(albums).prefix(20))
     }
 
-    func fetchMusicLibraryId() async throws -> String {
+    /// "server|user", the key the library choice is stored under.
+    var librarySelectionScope: String { "\(serverUrl)|\(userId)" }
+
+    /// Every music library the user can see (/Views is per user, so a library hidden from
+    /// this account never shows up), whether or not it is switched on in Settings.
+    func fetchMusicLibraries() async throws -> [LibraryView] {
         let response: UserViewsResponse = try await fetch(endpoint: "/Users/\(userId)/Views")
-        if let musicLibrary = response.Items.first(where: { $0.CollectionType == "music" }) {
-            return musicLibrary.Id
-        } else {
-            throw APIError.invalidResponse(404) // Simula un "not found"
+        return response.Items.filter { $0.CollectionType == "music" }
+    }
+
+    /// The music libraries to use: the visible ones that are switched on in Settings.
+    /// /Items takes a single ParentId, hence one query per library.
+    func fetchMusicLibraryIds() async throws -> [String] {
+        let all = try await fetchMusicLibraries()
+        if all.isEmpty { throw APIError.invalidResponse(404) } // Simula un "not found"
+        return MusicLibrarySelection.enabled(from: all, scope: librarySelectionScope).map(\.Id)
+    }
+
+    /// Runs the same query on each library at once and joins the answers, one copy per Id.
+    private func fetchMerged<R: ItemsResponse>(
+        _ type: R.Type, from libraryIds: [String], endpoint: (String) -> String
+    ) async throws -> [R.Element] {
+        let lists = try await withThrowingTaskGroup(of: (Int, [R.Element]).self) { group in
+            for (index, id) in libraryIds.enumerated() {
+                let url = endpoint(id)
+                group.addTask {
+                    let response: R = try await self.fetch(endpoint: url)
+                    return (index, response.items)
+                }
+            }
+            var results: [(Int, [R.Element])] = []
+            for try await result in group { results.append(result) }
+            return results.sorted { $0.0 < $1.0 }.map(\.1)
         }
+        var seen = Set<String>()
+        return lists.flatMap { $0 }.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func newestAdded(_ albums: [AlbumItem]) -> [AlbumItem] {
+        albums.sorted { ($0.dateAddedDate ?? .distantPast) > ($1.dateAddedDate ?? .distantPast) }
+    }
+
+    private static func mostRecentlyPlayed(_ tracks: [AudioItem]) -> [AudioItem] {
+        tracks.sorted { ($0.UserData?.lastPlayed ?? .distantPast) > ($1.UserData?.lastPlayed ?? .distantPast) }
+    }
+
+    func fetchTracks(from libraryIds: [String]) async throws -> [AudioItem] {
+        let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=SortName"
+        }
+        // Each library comes sorted; with several, the join has to be sorted again
+        guard libraryIds.count > 1 else { return tracks }
+        return tracks.sorted { $0.Name.localizedStandardCompare($1.Name) == .orderedAscending }
     }
     
-    func fetchTracks(from libraryId: String) async throws -> [AudioItem] {
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=SortName"
-        let response: AudioResponse = try await fetch(endpoint: endpoint)
-        return response.Items
-    }
-    
-    func fetchAlbums(from libraryId: String) async throws -> [AlbumItem] {
+    func fetchAlbums(from libraryIds: [String]) async throws -> [AlbumItem] {
         // Newest first by DateCreated (Jellyfin's "date added"); DateAdded is not a valid SortBy value
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending"
-        let response: AlbumResponse = try await fetch(endpoint: endpoint)
-        return response.Items
+        let albums = try await fetchMerged(AlbumResponse.self, from: libraryIds) { id in
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=MusicAlbum&Recursive=true&Fields=ProductionYear,AlbumArtists,DateCreated,PremiereDate&SortBy=DateCreated,SortName&SortOrder=Descending"
+        }
+        return libraryIds.count > 1 ? Self.newestAdded(albums) : albums
     }
     
-    func fetchArtists(from libraryId: String) async throws -> [ArtistItem] {
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=MusicArtist&Recursive=true&SortBy=SortName"
-        let response: ArtistResponse = try await fetch(endpoint: endpoint)
-        return response.Items
+    /// MusicArtist items are global: Jellyfin ignores ParentId for them and answers with the
+    /// same list whatever the library (checked on the server), so one query covers them all.
+    /// With only some libraries on, /Artists (which does honour ParentId) tells which ones
+    /// to keep.
+    func fetchArtists(from libraryIds: [String]) async throws -> [ArtistItem] {
+        let endpoint = "/Users/\(userId)/Items?IncludeItemTypes=MusicArtist&Recursive=true&SortBy=SortName"
+        async let everyone: ArtistResponse = fetch(endpoint: endpoint)
+        let total = try await fetchMusicLibraries().count
+        guard libraryIds.count < total else { return try await everyone.Items }
+        let inLibraries = try await fetchMerged(ArtistResponse.self, from: libraryIds) { id in
+            "/Artists?userId=\(userId)&ParentId=\(id)"
+        }
+        let keep = Set(inLibraries.map(\.Id))
+        return try await everyone.Items.filter { keep.contains($0.Id) }
     }
 
     func fetchAlbumTracks(albumId: String) async throws -> [AudioItem] {
@@ -303,10 +356,11 @@ class JellyfinAPIService {
     /// The songs this user has played, most recent first, with play count and last date:
     /// what the mixes are worked out from. Each user gets their own.
     func fetchListeningHistory(limit: Int = 2000) async throws -> [AudioItem] {
-        let libraryId = try await fetchMusicLibraryId()
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(libraryId)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=\(limit)&EnableUserData=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
-        let response: AudioResponse = try await fetch(endpoint: endpoint)
-        return response.Items
+        let libraryIds = try await fetchMusicLibraryIds()
+        let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=\(limit)&EnableUserData=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+        }
+        return libraryIds.count > 1 ? Array(Self.mostRecentlyPlayed(tracks).prefix(limit)) : tracks
     }
 
     // MARK: - Scrobbling statistics

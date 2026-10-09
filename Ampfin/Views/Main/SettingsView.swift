@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var libraryCacheSize: Int64 = 0
     @State private var songCacheSize: Int64 = 0
     @ObservedObject private var backup = SettingsBackup.shared
+    @State private var musicLibraries: [LibraryView] = []
+    @State private var disabledLibraries: Set<String> = []
     @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
     @AppStorage(AlbumBackdrop.storageKey) private var albumColorBackground = false
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
@@ -60,6 +62,7 @@ struct SettingsView: View {
             cacheSection
             backupSection
             artistsSection
+            musicLibrariesSection
             librarySyncSection
             aboutSection
         }
@@ -71,7 +74,7 @@ struct SettingsView: View {
             accountSection
 
             Section {
-                pageLink("Aspetto", icon: "paintpalette.fill", color: .pink) {
+                pageLink("Aspetto", icon: "swatchpalette.fill", color: .pink) {
                     appIconSection
                     accentSection
                     glassSection
@@ -86,23 +89,24 @@ struct SettingsView: View {
                     mixSection
                     statsSection
                 }
-                pageLink("Elenchi e Cover Flow", icon: "square.stack.fill", color: .indigo) {
+                pageLink("Elenchi e Cover Flow", icon: "rectangle.stack.fill", color: .indigo) {
                     letterIndexSection
                     coverFlowSection
                 }
-                pageLink("Audio", icon: "speaker.wave.2.fill", color: .red, summary: viewModel.streamQualityWifi.label) {
+                pageLink("Audio", icon: "hifispeaker.fill", color: .red, summary: viewModel.streamQualityWifi.label) {
                     audioOutputSection
                     equalizerSection
                     streamingSection
                     audioInfoSections
                 }
-                pageLink("Libreria", icon: "music.note.house.fill", color: .blue) {
+                pageLink("Libreria", icon: "music.note.square.stack.fill", color: .blue) {
+                    musicLibrariesSection
                     librarySyncSection
                     artistsSection
                     downloadsSection
                     cacheSection
                 }
-                pageLink("Backup", icon: "externaldrive.fill.badge.icloud", color: .green) {
+                pageLink("Backup", icon: "arrow.clockwise.icloud.fill", color: .green) {
                     backupSection
                 }
             }
@@ -127,11 +131,14 @@ struct SettingsView: View {
                 Label {
                     Text(title)
                 } icon: {
+                    // Coloured gradient glyph on a soft tinted squircle, instead of a white one on a solid tile
                     Image(systemName: icon)
-                        .font(.system(size: 16))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 16, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .symbolColorRenderingMode(.gradient)
+                        .foregroundStyle(color)
                         .frame(width: 29, height: 29)
-                        .background(color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .background(color.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 if let summary {
                     Spacer()
@@ -146,6 +153,7 @@ struct SettingsView: View {
     private func onPageAppear() {
         refreshSizes()
         viewModel.playerManager?.refreshAudioOutputInfo()
+        Task { await loadMusicLibraries() }
     }
 
     @ViewBuilder private var accentSection: some View {
@@ -664,6 +672,53 @@ struct SettingsView: View {
         } footer: {
             Text("Doppioni e featuring diventano un solo artista, in automatico o a mano.")
         }
+    }
+
+    /// One toggle per music library the account can see; the last one on stays on.
+    @ViewBuilder private var musicLibrariesSection: some View {
+        if musicLibraries.count > 1 {
+            Section {
+                ForEach(musicLibraries, id: \.Id) { library in
+                    Toggle(library.Name, isOn: libraryBinding(library))
+                        .disabled(isLastLibraryOn(library))
+                }
+            } header: {
+                Text("Librerie musicali")
+            } footer: {
+                Text("Scegli quali librerie del server mostrare. Ne serve almeno una.")
+            }
+        }
+    }
+
+    private func isLastLibraryOn(_ library: LibraryView) -> Bool {
+        musicLibraries.allSatisfy { $0.Id == library.Id || disabledLibraries.contains($0.Id) }
+    }
+
+    private func libraryBinding(_ library: LibraryView) -> Binding<Bool> {
+        Binding(
+            get: { !disabledLibraries.contains(library.Id) },
+            set: { isOn in
+                guard let api = viewModel.apiService else { return }
+                MusicLibrarySelection.setEnabled(isOn, id: library.Id, in: musicLibraries, scope: api.librarySelectionScope)
+                updateDisabledLibraries(scope: api.librarySelectionScope)
+                Task {
+                    await viewModel.fetchAllLibraryData()
+                    await viewModel.fetchRecentlyPlayedTracks()
+                }
+            }
+        )
+    }
+
+    private func loadMusicLibraries() async {
+        guard let api = viewModel.apiService, let all = try? await api.fetchMusicLibraries() else { return }
+        musicLibraries = all
+        updateDisabledLibraries(scope: api.librarySelectionScope)
+    }
+
+    /// What the toggles show is what is really in use (a stored "all off" counts as all on).
+    private func updateDisabledLibraries(scope: String) {
+        let on = Set(MusicLibrarySelection.enabled(from: musicLibraries, scope: scope).map(\.Id))
+        disabledLibraries = Set(musicLibraries.map(\.Id)).subtracting(on)
     }
 
     @ViewBuilder private var librarySyncSection: some View {

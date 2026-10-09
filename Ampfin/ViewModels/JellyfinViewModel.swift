@@ -582,11 +582,11 @@ class JellyfinViewModel: ObservableObject {
         isLoading = true
         
         do {
-            let libraryId = try await api.fetchMusicLibraryId()
+            let libraryIds = try await api.fetchMusicLibraryIds()
             
-            async let tracks = api.fetchTracks(from: libraryId)
-            async let albums = api.fetchAlbums(from: libraryId)
-            async let artists = api.fetchArtists(from: libraryId)
+            async let tracks = api.fetchTracks(from: libraryIds)
+            async let albums = api.fetchAlbums(from: libraryIds)
+            async let artists = api.fetchArtists(from: libraryIds)
             
             let (fetchedTracks, fetchedAlbums, fetchedArtists) = try await (tracks, albums, artists)
             
