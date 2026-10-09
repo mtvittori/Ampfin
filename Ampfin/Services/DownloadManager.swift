@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 enum DownloadState: Equatable {
     case notDownloaded
@@ -7,31 +7,61 @@ enum DownloadState: Equatable {
     case downloaded
 }
 
-final class DownloadManager: NSObject, ObservableObject {
+/// What a single song row observes. Status and progress are separate properties, so a row
+/// that only shows the "downloaded" mark is never redrawn by the progress ticks: only the
+/// small ring of that song reads `progress`.
+@Observable
+final class DownloadItemState {
+    enum Status { case notDownloaded, downloading, downloaded }
+
+    fileprivate(set) var status: Status
+    fileprivate(set) var progress: Double = 0
+
+    fileprivate init(status: Status) { self.status = status }
+}
+
+/// Changes whenever any song starts, finishes or is removed (never on progress). Read by the
+/// few views that look at many songs together (the "download all" button, Settings, album menu).
+@Observable
+final class DownloadActivity {
+    fileprivate(set) var revision = 0
+}
+
+/// Downloaded songs, the queue and the live progress. Main thread only, except the URLSession
+/// callbacks, which hand over to it. Views never observe the manager itself: they read
+/// `itemState(for:)` (one song) or `activity` (aggregate), so a download tick doesn't
+/// invalidate lists of thousands of songs.
+final class DownloadManager: NSObject {
     static let shared = DownloadManager()
 
-    /// Key: AudioItem.Id, Value: current download state
-    @Published private(set) var downloadStates: [String: DownloadState] = [:]
+    let activity = DownloadActivity()
 
+    private var items: [String: DownloadItemState] = [:]
+    /// Queued or running, mirrored by the items' status.
+    private var downloadingIds: Set<String> = []
     private var activeTasks: [String: URLSessionDownloadTask] = [:]
     private var progressObservations: [String: NSKeyValueObservation] = [:]
     private let fileManager = FileManager.default
 
-    // Persistent metadata: set of downloaded item IDs
+    // Progress arrives on the session's queue for every received chunk: it is parked here
+    // and published at most every `progressInterval`, in one main-thread pass.
+    private let progressLock = NSLock()
+    private var latestProgress: [String: Double] = [:]
+    private var flushScheduled = false
+    private let progressInterval = 0.25
+
+    // Persistent metadata: set of downloaded item IDs (written with a delay, see scheduleSave)
     private let downloadedIdsKey = "downloaded_item_ids"
     private var downloadedIds: Set<String> {
-        didSet {
-            UserDefaults.standard.set(Array(downloadedIds), forKey: downloadedIdsKey)
-        }
+        didSet { scheduleSave() }
     }
+    private var saveWork: DispatchWorkItem?
 
-    private var downloadsDirectory: URL {
-        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = docs.appendingPathComponent("AudioDownloads")
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        return dir
+    private let fileIndex: FileIndex
+
+    private static var downloadsDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("AudioDownloads")
     }
 
     private override init() {
@@ -40,18 +70,57 @@ final class DownloadManager: NSObject, ObservableObject {
         } else {
             self.downloadedIds = []
         }
+        let directory = Self.downloadsDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        fileIndex = FileIndex(directory: directory)
         super.init()
-
-        // Rebuild published states from persisted IDs
-        for id in downloadedIds {
-            downloadStates[id] = .downloaded
-        }
+        // Scan the folder once, off the main thread, so playback never waits for it.
+        let index = fileIndex
+        DispatchQueue.global(qos: .utility).async { index.warmUp() }
     }
 
     // MARK: - Query
 
+    /// Whether the song is downloaded. In a view body this registers the aggregate `activity`
+    /// (use `isDownloadedLive` in a row instead).
     func isDownloaded(_ itemId: String) -> Bool {
-        downloadedIds.contains(itemId)
+        _ = activity.revision
+        return downloadedIds.contains(itemId)
+    }
+
+    /// For a single row's body: only that song's status is observed.
+    func isDownloadedLive(_ itemId: String) -> Bool {
+        itemState(for: itemId).status == .downloaded
+    }
+
+    /// The observable state of one song, created on first use.
+    func itemState(for itemId: String) -> DownloadItemState {
+        if let state = items[itemId] { return state }
+        let state = DownloadItemState(status: status(of: itemId))
+        items[itemId] = state
+        return state
+    }
+
+    /// Plain status without observation: a view reading many songs together (with `activity`)
+    /// must not register every song's own state.
+    func status(of itemId: String) -> DownloadItemState.Status {
+        if downloadedIds.contains(itemId) { return .downloaded }
+        return downloadingIds.contains(itemId) ? .downloading : .notDownloaded
+    }
+
+    /// Status plus progress, for code that is not a view.
+    func state(of itemId: String) -> DownloadState {
+        switch status(of: itemId) {
+        case .notDownloaded: return .notDownloaded
+        case .downloading: return .downloading(progress: items[itemId]?.progress ?? 0)
+        case .downloaded: return .downloaded
+        }
+    }
+
+    /// Whether any song has been downloaded. Observed like `isDownloaded`.
+    var hasDownloads: Bool {
+        _ = activity.revision
+        return !downloadedIds.isEmpty
     }
 
     /// Returns the local file URL if the track is downloaded and the file exists.
@@ -59,16 +128,37 @@ final class DownloadManager: NSObject, ObservableObject {
     func localURL(for itemId: String) -> URL? {
         guard downloadedIds.contains(itemId) else { return nil }
 
-        let dir = downloadsDirectory
-        if let files = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil),
-           let match = files.first(where: { $0.lastPathComponent.hasPrefix(itemId) }) {
-            return match
+        if let url = fileIndex.url(for: itemId), fileManager.fileExists(atPath: url.path) {
+            return url
         }
 
-        // File missing — clean up stale metadata
+        // File missing: clean up stale metadata
+        fileIndex.remove(itemId)
         downloadedIds.remove(itemId)
-        downloadStates[itemId] = .notDownloaded
+        setStatus(.notDownloaded, for: itemId)
         return nil
+    }
+
+    /// Publishes a status change. Progress only changes through `flushProgress`.
+    private func setStatus(_ status: DownloadItemState.Status, for itemId: String) {
+        if status == .downloading { downloadingIds.insert(itemId) } else { downloadingIds.remove(itemId) }
+        let state = itemState(for: itemId)
+        guard state.status != status else { return }
+        state.status = status
+        state.progress = 0
+        activity.revision &+= 1
+    }
+
+    private func scheduleSave() {
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let ids = Array(self.downloadedIds)
+            let key = self.downloadedIdsKey
+            DispatchQueue.global(qos: .utility).async { UserDefaults.standard.set(ids, forKey: key) }
+        }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
     // MARK: - Download
@@ -78,10 +168,10 @@ final class DownloadManager: NSObject, ObservableObject {
     private let maxConcurrentDownloads = 3
 
     func download(item: AudioItem, streamURL: URL) {
-        guard !isDownloaded(item.Id), activeTasks[item.Id] == nil,
+        guard !downloadedIds.contains(item.Id), activeTasks[item.Id] == nil,
               !pending.contains(where: { $0.item.Id == item.Id }) else { return }
 
-        downloadStates[item.Id] = .downloading(progress: 0)
+        setStatus(.downloading, for: item.Id)
         pending.append((item, streamURL))
         startPendingDownloads()
         #if os(iOS)
@@ -104,17 +194,19 @@ final class DownloadManager: NSObject, ObservableObject {
     private func start(item: AudioItem, streamURL: URL) {
         let container = item.MediaSources?.first?.Container
         let task = JellyfinAPIService.urlSession.downloadTask(with: streamURL) { [weak self] tempURL, _, error in
-            // Move file IMMEDIATELY — temp file is deleted after this closure returns
+            // Move file IMMEDIATELY (still on the session's queue): the temp file is deleted
+            // after this closure returns.
             guard let self else { return }
-            let result = self.moveDownloadedFile(itemId: item.Id, container: container, tempURL: tempURL, error: error)
+            let file = self.moveDownloadedFile(itemId: item.Id, container: container, tempURL: tempURL, error: error)
+            if let file { self.fileIndex.set(item.Id, file) }
             DispatchQueue.main.async {
                 self.activeTasks.removeValue(forKey: item.Id)
                 self.progressObservations.removeValue(forKey: item.Id)
-                if result {
+                if file != nil {
                     self.downloadedIds.insert(item.Id)
-                    self.downloadStates[item.Id] = .downloaded
+                    self.setStatus(.downloaded, for: item.Id)
                 } else {
-                    self.downloadStates[item.Id] = .notDownloaded
+                    self.setStatus(.notDownloaded, for: item.Id)
                 }
                 self.startPendingDownloads()
                 #if os(iOS)
@@ -123,33 +215,61 @@ final class DownloadManager: NSObject, ObservableObject {
             }
         }
 
-        // KVO for progress tracking
+        // KVO fires for every received chunk, on the session's queue: only park the value.
         let observation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
-            DispatchQueue.main.async {
-                // A late update after a stop would leave the song "downloading" forever.
-                guard let self, self.activeTasks[item.Id] != nil else { return }
-                self.downloadStates[item.Id] = .downloading(progress: progress.fractionCompleted)
-                #if os(iOS)
-                DownloadBackgroundTask.shared.progressChanged()
-                #endif
-            }
+            self?.report(progress: progress.fractionCompleted, for: item.Id)
         }
         progressObservations[item.Id] = observation
         activeTasks[item.Id] = task
         task.resume()
     }
 
-    /// Moves the temp file to the downloads directory synchronously.
+    /// Any thread. Keeps the latest value per song and schedules a single main-thread flush.
+    private func report(progress: Double, for itemId: String) {
+        progressLock.lock()
+        latestProgress[itemId] = progress
+        let needsFlush = !flushScheduled
+        flushScheduled = true
+        progressLock.unlock()
+        if needsFlush {
+            DispatchQueue.main.asyncAfter(deadline: .now() + progressInterval) { [weak self] in
+                self?.flushProgress()
+            }
+        }
+    }
+
+    private func flushProgress() {
+        progressLock.lock()
+        let batch = latestProgress
+        latestProgress = [:]
+        flushScheduled = false
+        progressLock.unlock()
+
+        var changed = false
+        for (itemId, value) in batch {
+            // A late update after a stop would leave the song "downloading" forever.
+            guard activeTasks[itemId] != nil else { continue }
+            let state = itemState(for: itemId)
+            // Under a percent the ring wouldn't visibly move.
+            guard value - state.progress >= 0.01 || (value >= 1 && state.progress < 1) else { continue }
+            state.progress = value
+            changed = true
+        }
+        #if os(iOS)
+        if changed { DownloadBackgroundTask.shared.progressChanged() }
+        #endif
+    }
+
+    /// Moves the temp file to the downloads directory synchronously and returns where it went.
     /// Must be called on the URLSession callback thread (before the temp file is deleted).
-    private func moveDownloadedFile(itemId: String, container: String?, tempURL: URL?, error: Error?) -> Bool {
+    private func moveDownloadedFile(itemId: String, container: String?, tempURL: URL?, error: Error?) -> URL? {
         guard let tempURL, error == nil else {
             print("[Download] Errore: \(error?.localizedDescription ?? "sconosciuto")")
-            return false
+            return nil
         }
 
         let ext = container?.lowercased() ?? "audio"
-        let dir = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("AudioDownloads")
+        let dir = Self.downloadsDirectory
 
         // Ensure directory exists
         if !fileManager.fileExists(atPath: dir.path) {
@@ -164,10 +284,10 @@ final class DownloadManager: NSObject, ObservableObject {
             }
             try fileManager.moveItem(at: tempURL, to: destination)
             print("[Download] Completato: \(destination.lastPathComponent)")
-            return true
+            return destination
         } catch {
             print("[Download] Errore spostamento file: \(error)")
-            return false
+            return nil
         }
     }
 
@@ -181,11 +301,12 @@ final class DownloadManager: NSObject, ObservableObject {
         progressObservations.removeValue(forKey: itemId)
 
         // Remove file from disk
-        if let url = localURL(for: itemId) {
+        if let url = fileIndex.url(for: itemId) {
             try? fileManager.removeItem(at: url)
+            fileIndex.remove(itemId)
         }
         downloadedIds.remove(itemId)
-        downloadStates[itemId] = .notDownloaded
+        setStatus(.notDownloaded, for: itemId)
         #if os(iOS)
         DownloadBackgroundTask.shared.refresh()
         #endif
@@ -202,7 +323,7 @@ final class DownloadManager: NSObject, ObservableObject {
 
     func totalDownloadSize() -> Int64 {
         guard let files = try? fileManager.contentsOfDirectory(
-            at: downloadsDirectory,
+            at: Self.downloadsDirectory,
             includingPropertiesForKeys: [.fileSizeKey]
         ) else { return 0 }
 
@@ -210,5 +331,47 @@ final class DownloadManager: NSObject, ObservableObject {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
             return total + Int64(size)
         }
+    }
+}
+
+/// Song id -> file in the downloads folder, scanned once and then kept up to date, so
+/// resolving a song at playback doesn't list the whole folder. Thread-safe.
+private final class FileIndex {
+    private let directory: URL
+    private let lock = NSLock()
+    private var urls: [String: URL]?
+
+    init(directory: URL) { self.directory = directory }
+
+    func warmUp() {
+        lock.lock(); defer { lock.unlock() }
+        load()
+    }
+
+    func url(for itemId: String) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        load()
+        return urls?[itemId]
+    }
+
+    func set(_ itemId: String, _ url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        load()
+        urls?[itemId] = url
+    }
+
+    func remove(_ itemId: String) {
+        lock.lock(); defer { lock.unlock() }
+        load()
+        urls?[itemId] = nil
+    }
+
+    /// Files are named "<id>.<container>". Call with the lock held.
+    private func load() {
+        guard urls == nil else { return }
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        var map: [String: URL] = [:]
+        for file in files { map[file.deletingPathExtension().lastPathComponent] = file }
+        urls = map
     }
 }

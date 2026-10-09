@@ -311,7 +311,7 @@ private extension AudioItem {
 /// A song in a playlist or mix: cover, title, artist, downloaded mark, the wave while it plays.
 struct CollectionTrackRow: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     let track: AudioItem
     let queue: [AudioItem]
     let onRemove: ((AudioItem) -> Void)?
@@ -342,7 +342,7 @@ struct CollectionTrackRow: View {
 
                 Spacer(minLength: 8)
 
-                if downloadManager.isDownloaded(track.Id) {
+                if downloadManager.isDownloadedLive(track.Id) {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.footnote)
                         .foregroundStyle(.secondary)

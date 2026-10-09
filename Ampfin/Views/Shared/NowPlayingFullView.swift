@@ -4,6 +4,22 @@ import MediaPlayer
 import AVFoundation
 #endif
 
+/// The vertical offset of the player while it is dragged down to close.
+@Observable
+final class PlayerDrag {
+    var offset: CGFloat = 0
+}
+
+/// Applies the drag offset. It reads `drag.offset` in its own body, so the touch frames
+/// invalidate only this modifier and not the player's content.
+private struct PlayerDragOffset: ViewModifier {
+    let drag: PlayerDrag
+
+    func body(content: Content) -> some View {
+        content.offset(y: drag.offset)
+    }
+}
+
 /// Full-screen expanded Now Playing view (iOS only).
 /// Displayed inline in ContentView. Its Liquid Glass elements use the
 /// `.materialize` transition (not `.matchedGeometry`): the mini player bar
@@ -22,7 +38,10 @@ struct NowPlayingFullView: View {
 
     let item: AudioItem
     let isPlaying: Bool
-    let currentTime: TimeInterval
+    /// Not observed here: only the scrubber and the lyrics read the position (through a
+    /// ClockReader). Observing it in this view re-ran its whole body twice a second, also
+    /// in the middle of the close animation.
+    let clock: PlaybackClock
     let duration: TimeInterval
     let artworkURL: URL?
 
@@ -46,7 +65,9 @@ struct NowPlayingFullView: View {
     }
     @State private var sliderValue: Double = 0
     @State private var isEditingSlider: Bool = false
-    @State private var dragOffset: CGFloat = 0
+    /// The close drag. A reference type on purpose: as @State, every touch frame re-ran the
+    /// whole body (cover, glass buttons, panels); now only `PlayerDragOffset` redraws.
+    @State private var drag = PlayerDrag()
     @State private var showAudioInfo: Bool = false
     @State private var panel: PlayerPanel = .artwork
     @State private var showTrackInfo = false
@@ -68,6 +89,9 @@ struct NowPlayingFullView: View {
 
     /// Volume is temporarily hidden per product decision — flip this back to `true` to restore it.
     private let isVolumeSliderEnabled = false
+
+    /// For the parts of the view that are not under a ClockReader (unused layouts below).
+    private var currentTime: TimeInterval { clock.time }
 
     private func formatTime(_ time: TimeInterval) -> String {
         guard !time.isNaN && !time.isInfinite && time >= 0 else { return "0:00" }
@@ -91,12 +115,12 @@ struct NowPlayingFullView: View {
 
                 appleMusicLayout(geo)
             }
-            .offset(y: dragOffset)
+            .modifier(PlayerDragOffset(drag: drag))
             .gesture(
                 DragGesture()
                     .onChanged { value in
                         if value.translation.height > 0 {
-                            dragOffset = value.translation.height
+                            drag.offset = value.translation.height
                         }
                     }
                     .onEnded { value in
@@ -109,17 +133,12 @@ struct NowPlayingFullView: View {
                             return
                         }
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                            dragOffset = 0
+                            drag.offset = 0
                         }
                     }
             )
         }
         .ignoresSafeArea()
-        .onChange(of: currentTime) {
-            if !isEditingSlider {
-                sliderValue = currentTime
-            }
-        }
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
@@ -203,7 +222,9 @@ struct NowPlayingFullView: View {
                     case .artwork:
                         Spacer(minLength: 0)
                     case .lyrics:
-                        LyricsPanel(item: item, currentTime: currentTime, color: fg, onSeek: onSeek)
+                        ClockReader(clock: clock) { time in
+                            LyricsPanel(item: item, currentTime: time, color: fg, onSeek: onSeek)
+                        }
                     case .queue:
                         QueuePanel(color: fg)
                     }
@@ -342,6 +363,10 @@ struct NowPlayingFullView: View {
 
     /// Thick bar, elapsed and remaining time, the format badge in the middle.
     private var appleScrubber: some View {
+        ClockReader(clock: clock) { time in scrubber(at: time) }
+    }
+
+    private func scrubber(at currentTime: TimeInterval) -> some View {
         let shown = isEditingSlider ? sliderValue : currentTime
         let maxDuration = duration > 0 ? duration : 1
 

@@ -91,7 +91,7 @@ final class DownloadBackgroundTask {
         var partial = 0.0
         var running = false
         for id in batch {
-            switch manager.downloadStates[id] ?? .notDownloaded {
+            switch manager.state(of: id) {
             case .downloaded: done += 1
             case .downloading(let progress): running = true; partial += progress
             case .notDownloaded: break
@@ -114,7 +114,7 @@ final class DownloadBackgroundTask {
         let ids = batch
         batch = []
         for id in ids {
-            if case .downloading = DownloadManager.shared.downloadStates[id] ?? .notDownloaded {
+            if case .downloading = DownloadManager.shared.state(of: id) {
                 DownloadManager.shared.removeDownload(for: id)
             }
         }

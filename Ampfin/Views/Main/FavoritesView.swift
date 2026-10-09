@@ -107,7 +107,7 @@ extension FavoritesView {
 /// take it out of the favorites.
 private struct FavoriteTrackRow: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     let track: AudioItem
     let queue: [AudioItem]
 
@@ -144,7 +144,7 @@ private struct FavoriteTrackRow: View {
             }
             .buttonStyle(.plain)
 
-            if downloadManager.isDownloaded(track.Id) {
+            if downloadManager.isDownloadedLive(track.Id) {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -194,20 +194,22 @@ private struct FavoriteTrackRow: View {
 /// iOS keeps it going in the background and shows it as a live activity.
 struct DownloadAllButton: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     let tracks: [AudioItem]
 
     var body: some View {
-        let states = tracks.map { downloadManager.downloadStates[$0.Id] ?? .notDownloaded }
+        // Aggregate over many songs: reads `activity` (status changes), not the per-song progress.
+        let _ = downloadManager.activity.revision
+        let states = tracks.map { downloadManager.status(of: $0.Id) }
         let done = states.filter { $0 == .downloaded }.count
-        let inProgress = states.contains { if case .downloading = $0 { return true } else { return false } }
+        let inProgress = states.contains { $0 == .downloading }
         let missing = tracks.count - done
 
         Button {
             if inProgress {
                 // Stop what hasn't finished; the songs already saved stay.
                 for (track, state) in zip(tracks, states) {
-                    if case .downloading = state { viewModel.removeDownload(for: track.Id) }
+                    if state == .downloading { viewModel.removeDownload(for: track.Id) }
                 }
             } else {
                 tracks.filter { !downloadManager.isDownloaded($0.Id) }.forEach(viewModel.downloadTrack)

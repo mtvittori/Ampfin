@@ -295,7 +295,7 @@ struct HeroPlayControls: View {
 /// moving wave when it plays, the length; long press for favorite and download, swipe to queue.
 struct HeroTrackRow: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
 
     let track: AudioItem
     let number: Int?
@@ -337,7 +337,7 @@ struct HeroTrackRow: View {
                                 .font(.caption2)
                                 .foregroundStyle(palette.secondary)
                         }
-                        if downloadManager.isDownloaded(track.Id) {
+                        if downloadManager.isDownloadedLive(track.Id) {
                             Image(systemName: "arrow.down.circle.fill")
                                 .font(.caption2)
                                 .foregroundStyle(palette.secondary)
@@ -386,7 +386,7 @@ struct HeroTrackRow: View {
                 Label(viewModel.isTrackFavorite(track.id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti",
                       systemImage: viewModel.isTrackFavorite(track.id) ? "heart.slash" : "heart")
             }
-            if downloadManager.isDownloaded(track.Id) {
+            if downloadManager.isDownloadedLive(track.Id) {
                 Button(role: .destructive) {
                     viewModel.removeDownload(for: track.Id)
                 } label: {

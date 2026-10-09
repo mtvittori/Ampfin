@@ -125,7 +125,10 @@ private struct AlbumMesh: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.1, paused: reduceMotion || scenePhase != .active)) { context in
+        // Also paused while the full player covers the screen (and while it slides away):
+        // a full-screen mesh redrawn ten times a second under it only steals frames.
+        let paused = reduceMotion || scenePhase != .active || PlayerPresentation.shared.isCovering
+        TimelineView(.animation(minimumInterval: 0.1, paused: paused)) { context in
             MeshGradient(width: 3, height: 3,
                          points: Self.points(at: reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate),
                          colors: colors,

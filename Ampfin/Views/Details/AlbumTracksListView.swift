@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AlbumTracksListView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     let album: AlbumItem
 
     @State private var selectedTrackForInfo: AudioItem?

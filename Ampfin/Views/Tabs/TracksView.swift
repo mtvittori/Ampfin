@@ -2,7 +2,6 @@ import SwiftUI
 
 struct TracksView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
-    @ObservedObject private var downloadManager = DownloadManager.shared
     @State private var searchText = ""
 
     var filteredTracks: [AudioItem] {
@@ -164,7 +163,7 @@ struct TracksView: View {
             .buttonStyle(PlainButtonStyle())
 
             // Download
-            trackDownloadButton(for: item)
+            TrackDownloadButton(item: item)
                 .padding(.trailing, 4)
             
             if viewModel.currentlyPlayingItem?.id == item.id {
@@ -209,11 +208,17 @@ struct TracksView: View {
             TrackNavigationMenuItems(track: item)
         }
     }
+}
 
-    @ViewBuilder
-    private func trackDownloadButton(for item: AudioItem) -> some View {
-        let state = downloadManager.downloadStates[item.Id] ?? .notDownloaded
-        switch state {
+/// The download control of one row. It observes only its own song, and the ring is a
+/// separate view: progress ticks redraw just the ring, never the list.
+private struct TrackDownloadButton: View {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let item: AudioItem
+
+    var body: some View {
+        let state = DownloadManager.shared.itemState(for: item.Id)
+        switch state.status {
         case .notDownloaded:
             Button {
                 viewModel.downloadTrack(item)
@@ -222,20 +227,11 @@ struct TracksView: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-        case .downloading(let progress):
-            ZStack {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 2)
-                    .frame(width: 18, height: 18)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .frame(width: 18, height: 18)
-                    .rotationEffect(.degrees(-90))
-            }
-            .onTapGesture {
-                viewModel.removeDownload(for: item.Id)
-            }
+        case .downloading:
+            DownloadProgressRing(state: state)
+                .onTapGesture {
+                    viewModel.removeDownload(for: item.Id)
+                }
         case .downloaded:
             Image(systemName: "arrow.down.circle.fill")
                 .foregroundColor(.accentColor)
@@ -247,5 +243,25 @@ struct TracksView: View {
                     }
                 }
         }
+    }
+}
+
+/// The only view that reads a song's progress.
+private struct DownloadProgressRing: View {
+    let state: DownloadItemState
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 2)
+                .frame(width: 18, height: 18)
+            Circle()
+                .trim(from: 0, to: state.progress)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: 18, height: 18)
+                .rotationEffect(.degrees(-90))
+        }
+        // Progress is published a few times a second: glide between the values.
+        .animation(.linear(duration: 0.25), value: state.progress)
     }
 }

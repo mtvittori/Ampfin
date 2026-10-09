@@ -53,10 +53,11 @@ struct ContentView: View {
 
     @State private var selectedSidebar: SidebarItem? = .home
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var showFullPlayer: Bool = false
+    /// Whether the full player is open. It lives outside ContentView's state on purpose:
+    /// flipping a @State here re-ran the body of the whole tab hierarchy (and of the visible
+    /// screen, a list of thousands of songs) right when the player opens or closes.
+    private let presentation = PlayerPresentation.shared
     @State private var miniPlayerVisible: Bool = true
-    /// The cover morphs between the mini player and the full player.
-    @Namespace private var playerArtwork
 
     var body: some View {
         mainBody
@@ -91,7 +92,7 @@ struct ContentView: View {
         switch url.host() {
         case "player":
             guard viewModel.currentlyPlayingItem != nil else { return }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) { showFullPlayer = true }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) { presentation.isExpanded = true }
         case "album":
             let id = url.lastPathComponent
             linkedAlbum = viewModel.albums.first { $0.Id == id }
@@ -158,7 +159,7 @@ struct ContentView: View {
     /// to that tab and opens the page on a fresh stack.
     private func handle(_ request: LibraryNavigator.Request?) {
         guard let request else { return }
-        showFullPlayer = false
+        presentation.isExpanded = false
         linkedAlbum = nil
         switch request.destination {
         case .artist(let artist):
@@ -239,43 +240,15 @@ struct ContentView: View {
             .tabBarMinimizeBehavior(.onScrollDown)
             .nowPlayingAccessory(isEnabled: viewModel.currentlyPlayingItem != nil) {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
-                    showFullPlayer = true
+                    presentation.isExpanded = true
                 }
             }
             .environment(\.miniPlayerVisible, $miniPlayerVisible)
 
-            // Player layer
-            if let playingItem = viewModel.currentlyPlayingItem {
-                ZStack {
-                    if showFullPlayer {
-                        // Full player — its own Liquid Glass elements materialize in place
-                        // (no shape-morph from the mini bar; see NowPlayingFullView doc comment).
-                        ClockReader(clock: viewModel.clock) { time in NowPlayingFullView(
-                            item: playingItem,
-                            isPlaying: viewModel.isPlaying,
-                            currentTime: time,
-                            duration: playingItem.duration ?? 0,
-                            artworkURL: viewModel.artworkURL(for: playingItem.AlbumId ?? playingItem.id, size: 600),
-                            onPlayPause: { viewModel.playerManager.togglePlayPause() },
-                            onBackward: { viewModel.playerManager.backward() },
-                            onForward: { viewModel.playerManager.forward() },
-                            onSeek: { time in viewModel.playerManager.seek(to: time) },
-                            isExpanded: $showFullPlayer,
-                            artworkNamespace: playerArtwork
-                        ) }
-                        // Slides as one sheet; materializing its glass pieces on top
-                        // of the slide flickered at the end.
-                        .glassEffectTransition(.identity)
-                        // Rises from the accessory like a sheet.
-                        .transition(.move(edge: .bottom))
-                        // Stays above the tabs while it slides out, instead of dropping behind
-                        // them for the last frames of the removal.
-                        .zIndex(1)
-                    }
-                }
-            }
+            // Player layer, a view of its own so that opening and closing it only redraws it.
+            FullPlayerLayer()
+                .zIndex(1)
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.88), value: showFullPlayer)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.currentlyPlayingItem != nil)
         .task {
             await loadLibraryIfNeeded()
@@ -349,7 +322,7 @@ struct ContentView: View {
         }
         viewModel.playerManager.pause()
         // `-provaMini YES` leaves the mini player instead of opening the full one.
-        showFullPlayer = !defaults.bool(forKey: "provaMini")
+        presentation.isExpanded = !defaults.bool(forKey: "provaMini")
     }
     #endif
     #endif

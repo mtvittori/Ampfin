@@ -5,7 +5,7 @@ import os
 struct SettingsView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject var colorManager = AccentColorManager.shared
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     @State private var downloadSize: Int64 = 0
     @State private var cacheSize: Int64 = 0
     @State private var libraryCacheSize: Int64 = 0
@@ -551,9 +551,7 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
 
-            if downloadManager.downloadStates.values.contains(where: {
-                if case .downloaded = $0 { return true }; return false
-            }) {
+            if downloadManager.hasDownloads {
                 Button("Elimina tutti i download", role: .destructive) {
                     downloadManager.removeAllDownloads()
                     refreshSizes()
