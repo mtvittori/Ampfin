@@ -25,6 +25,7 @@ struct SettingsView: View {
     @AppStorage(HeroCoverSettings.storageKey) private var heroCoverBelowIsland = false
     @AppStorage(JellyfinViewModel.hiResTo48kKey) private var hiResTo48k = true
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
+    @AppStorage(PlayerModeButtonsSettings.storageKey) private var playerShowsModeButtons = false
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -388,10 +389,11 @@ struct SettingsView: View {
     @ViewBuilder private var nowPlayingBackgroundSection: some View {
         Section {
             Toggle("Sfondo sfocato", isOn: $colorManager.nowPlayingBlurredBackground)
+            Toggle("Casuale e Ripeti nel player", isOn: $playerShowsModeButtons)
         } header: {
             Text("Schermata Play")
         } footer: {
-            Text("Lo sfondo della copertina nella schermata Play, sfocata o nitida.")
+            Text("Lo sfondo della copertina nella schermata Play, sfocata o nitida. Casuale e Ripeti compaiono ai lati dei comandi di riproduzione, senza aprire il menu o la coda.")
         }
     }
 

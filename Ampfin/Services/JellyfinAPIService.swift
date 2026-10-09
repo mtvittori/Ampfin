@@ -253,7 +253,7 @@ class JellyfinAPIService {
 
     func fetchTracks(from libraryIds: [String]) async throws -> [AudioItem] {
         let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
-            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=SortName"
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres,DateCreated&SortBy=SortName"
         }
         // Each library comes sorted; with several, the join has to be sorted again
         guard libraryIds.count > 1 else { return tracks }

@@ -32,11 +32,8 @@ struct TracksView: View {
     @AppStorage(LetterIndexStyle.storageKey) private var indexStyle = LetterIndexStyle.classic.rawValue
     private var classicIndex: Bool { indexStyle == LetterIndexStyle.classic.rawValue }
 
-    enum TrackSort: String, CaseIterable, Identifiable {
-        case name, artist
-        var id: String { rawValue }
-        var title: String { self == .name ? "Nome" : "Artista" }
-    }
+    /// Letters mean nothing in date order: month headers instead, and no index.
+    private var showsLetters: Bool { sort != .added }
 
     /// What the sections depend on; a change rebuilds them.
     private var sectionsKey: String {
@@ -45,26 +42,13 @@ struct TracksView: View {
 
     private func rebuildSections() {
         let tracks = filteredTracks
-        let sorted: [AudioItem]
-        let name: (AudioItem) -> String
+        let artists = sort == .artist ? viewModel.artistNames(for: tracks) : [:]
+        let sorted = sort.sorted(tracks, artists: artists)
         switch sort {
-        case .name:
-            name = { $0.Name }
-            sorted = tracks.sorted { $0.Name.localizedStandardCompare($1.Name) == .orderedAscending }
-        case .artist:
-            // Artist, then album, then the library's own order (no track numbers here).
-            let artists = Dictionary(tracks.map { ($0.Id, viewModel.artistName(for: $0) ?? "") },
-                                     uniquingKeysWith: { first, _ in first })
-            name = { artists[$0.Id] ?? "" }
-            sorted = tracks.enumerated().sorted { a, b in
-                let byArtist = (artists[a.element.Id] ?? "").localizedStandardCompare(artists[b.element.Id] ?? "")
-                if byArtist != .orderedSame { return byArtist == .orderedAscending }
-                let byAlbum = (a.element.Album ?? "").localizedStandardCompare(b.element.Album ?? "")
-                if byAlbum != .orderedSame { return byAlbum == .orderedAscending }
-                return a.offset < b.offset
-            }.map(\.element)
+        case .name: sections = LetterIndex.sections(sorted, name: \.Name)
+        case .artist: sections = LetterIndex.sections(sorted) { artists[$0.Id] ?? "" }
+        case .added: sections = TrackSort.monthSections(sorted)
         }
-        sections = LetterIndex.sections(sorted, name: name)
         // Plays in the order on screen, "#" included.
         queue = sections.flatMap(\.items)
     }
@@ -86,18 +70,19 @@ struct TracksView: View {
                         ForEach(section.items) { item in
                             row(for: item)
                                 .albumBackdropRow()
+                                .queueSwipeActions(item, viewModel: viewModel)
                         }
                     } header: {
                         Text(section.letter)
                             .font(.headline)
                             .foregroundStyle(.secondary)
                     }
-                    .sectionIndexLabel(section.letter)
+                    .sectionIndexLabel(showsLetters ? section.letter : nil)
                 }
             }
             .listStyle(.plain)
-            .systemLetterIndex(classicIndex)
-            .letterScrubber(letters: classicIndex ? [] : sections.map(\.letter)) { letter in
+            .systemLetterIndex(classicIndex && showsLetters)
+            .letterScrubber(letters: classicIndex || !showsLetters ? [] : sections.map(\.letter)) { letter in
                 // The section's first song: header rows can't be scrolled to.
                 if let first = sections.first(where: { $0.letter == letter })?.items.first {
                     proxy.scrollTo(first.id, anchor: .top)
@@ -116,7 +101,7 @@ struct TracksView: View {
         .task(id: sectionsKey) { rebuildSections() }
     }
 
-    /// "Ordina per Nome / Artista", the third button next to Play and Shuffle.
+    /// "Ordina per Nome / Artista / Aggiunti di recente", the third button next to Play and Shuffle.
     private var sortMenu: some View {
         Menu {
             Picker("Ordina per", selection: $sort) {
@@ -213,7 +198,6 @@ struct TracksView: View {
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .queueSwipeActions(item, viewModel: viewModel)
         .contextMenu {
             Button {
                 viewModel.playerManager.play(item: item, in: queue)

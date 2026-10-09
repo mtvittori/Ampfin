@@ -143,6 +143,90 @@ extension View {
     }
 }
 
+// MARK: - Swipe outside a List
+
+/// The same two swipes for rows that aren't in a List (the hero pages), where
+/// `.swipeActions` doesn't exist: right for "Dopo", left for "In coda". Past the
+/// threshold the action is armed (a tick); letting go there commits and the row springs
+/// back. The offset lives in a GestureState, so only this row redraws while dragging.
+private struct QueueDragSwipe: ViewModifier {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let track: AudioItem
+    /// The page color, to hide the action color behind the row while it is still.
+    let background: Color
+
+    private struct Drag {
+        var x: CGFloat = 0
+        /// Decided once, on the first movement: a mostly vertical drag is a scroll.
+        var horizontal: Bool?
+    }
+    @GestureState private var drag = Drag()
+
+    private let threshold: CGFloat = 90
+
+    /// The row's offset, with resistance past the threshold.
+    private var offset: CGFloat {
+        let distance = abs(drag.x)
+        let eased = distance <= threshold ? distance : threshold + (distance - threshold) * 0.3
+        return drag.x < 0 ? -eased : eased
+    }
+
+    func body(content: Content) -> some View {
+        let x = offset
+        let armed = abs(drag.x) >= threshold
+        content
+            .background(x == 0 ? Color.clear : background)
+            .offset(x: x)
+            .background { if x != 0 { action(for: x, armed: armed) } }
+            .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: x)
+            .sensoryFeedback(.impact(weight: .light), trigger: armed) { _, isArmed in isArmed }
+            #if os(iOS)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .updating($drag) { value, state, _ in
+                        let size = value.translation
+                        if state.horizontal == nil { state.horizontal = abs(size.width) > abs(size.height) * 2 }
+                        if state.horizontal == true { state.x = size.width }
+                    }
+                    .onEnded { value in
+                        let size = value.translation
+                        guard abs(size.width) >= threshold, abs(size.width) > abs(size.height) * 2 else { return }
+                        if size.width > 0 { viewModel.playNext([track]) } else { viewModel.addToQueue([track]) }
+                    }
+            )
+            #endif
+    }
+
+    private func action(for x: CGFloat, armed: Bool) -> some View {
+        let next = x > 0
+        return Rectangle()
+            .fill(next ? Color.purple : Color.orange)
+            .overlay(alignment: next ? .leading : .trailing) {
+                VStack(spacing: 2) {
+                    Image(systemName: next ? "text.line.first.and.arrowtriangle.forward" : "text.line.last.and.arrowtriangle.forward")
+                        .font(.title3)
+                        .scaleEffect(armed ? 1.15 : 1)
+                    Text(next ? "Dopo" : "In coda")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .frame(width: abs(x))
+                .opacity(min(1, abs(x) / 50))
+                .animation(.snappy(duration: 0.2), value: armed)
+            }
+            .clipped()
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// Swipe right for "Dopo", left for "In coda" on a row outside a List.
+    func queueDragSwipe(_ track: AudioItem, background: Color) -> some View {
+        modifier(QueueDragSwipe(track: track, background: background))
+    }
+}
+
 // MARK: - Play / Shuffle
 
 /// Apple Music's two buttons above a song list: play from the top, or shuffle. An

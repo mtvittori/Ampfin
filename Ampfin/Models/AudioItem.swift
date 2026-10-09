@@ -43,7 +43,11 @@ struct AudioItem: Codable, Identifiable {
     let UserData: UserItemData?
     /// The song's entry inside a playlist, needed to take it out of the playlist.
     let PlaylistItemId: String?
-    
+    /// When the song was added to the library; needs `Fields=DateCreated`. Optional: a
+    /// library cache written before has none.
+    let DateCreated: String?
+    var dateAddedDate: Date? { DateCreated.flatMap(AlbumItem.parseDate) }
+
     var mainArtistName: String? { AlbumArtists?.first?.Name ?? Artists?.first }
     
     var duration: TimeInterval? {

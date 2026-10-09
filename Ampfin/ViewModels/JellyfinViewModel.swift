@@ -650,10 +650,12 @@ class JellyfinViewModel: ObservableObject {
         self.albums = Self.newestFirst(cached.albums)
         self.rawArtists = cached.artists
         self.allAvailableGenres = cached.genres
-        // A cache written before the albums carried their date: sync again (the stale check
-        // sees no sync date), or "Aggiunti di recente" keeps the old order.
+        // A cache written before the albums (or the songs) carried their date: sync again
+        // (the stale check sees no sync date), or "Aggiunti di recente" keeps the old order.
         let hasDates = cached.albums.contains { $0.DateCreated != nil }
-        self.lastLibrarySyncDate = hasDates || cached.albums.isEmpty ? cached.lastSyncDate : nil
+        let tracksHaveDates = cached.tracks.contains { $0.DateCreated != nil }
+        self.lastLibrarySyncDate = (hasDates || cached.albums.isEmpty) && (tracksHaveDates || cached.tracks.isEmpty)
+            ? cached.lastSyncDate : nil
         return true
     }
 

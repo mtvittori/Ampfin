@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FavoritesView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
+    @AppStorage("favoriteTracksSort") private var sort: TrackSort = .name
 
     /// Apple Music-style: Play / Shuffle on the favorite songs, the favorite albums as a
     /// strip of covers, then the songs with their covers; swipes and long press queue them.
@@ -15,7 +16,10 @@ struct FavoritesView: View {
 
     @ViewBuilder
     private var phoneBody: some View {
-        let tracks = viewModel.favoriteTracks
+        // The library's own order is already by name; the others sort the few favorites.
+        let favorites = viewModel.favoriteTracks
+        let tracks = sort == .name ? favorites
+            : sort.sorted(favorites, artists: sort == .artist ? viewModel.artistNames(for: favorites) : [:])
         let albums = viewModel.favoriteAlbums
 
         if tracks.isEmpty && albums.isEmpty {
@@ -43,7 +47,7 @@ struct FavoritesView: View {
                 }
 
                 if !tracks.isEmpty {
-                    sectionTitle("Brani", count: tracks.count)
+                    sectionTitle("Brani", count: tracks.count) { sortMenu }
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                         FavoriteTrackRow(track: track, queue: tracks)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -61,17 +65,41 @@ struct FavoritesView: View {
     }
 
     private func sectionTitle(_ title: String, count: Int) -> some View {
+        sectionTitle(title, count: count) { EmptyView() }
+    }
+
+    private func sectionTitle<Trailing: View>(_ title: String, count: Int,
+                                              @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.title2.weight(.bold))
             Text("\(count)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            Spacer()
+            trailing()
         }
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 18, leading: 20, bottom: 6, trailing: 20))
         .albumBackdropRow()
         .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension FavoritesView {
+    /// Name, artist or date added (Jellyfin has no "favorited on": the library's date).
+    fileprivate var sortMenu: some View {
+        Menu {
+            Picker("Ordina per", selection: $sort) {
+                ForEach(TrackSort.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+        } label: {
+            Label(sort.title, systemImage: "arrow.up.arrow.down")
+                .font(.subheadline.weight(.semibold))
+        }
+        .accessibilityLabel("Ordina per \(sort.title.lowercased())")
     }
 }
 

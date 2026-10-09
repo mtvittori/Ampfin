@@ -57,6 +57,8 @@ struct NowPlayingFullView: View {
     private var fg: Color { palette.foreground }
     /// Option in Settings → Aspetto: the heart turns pink only for a moment after a tap.
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
+    /// Option in Settings → Aspetto: shuffle and repeat on either side of the transport.
+    @AppStorage(PlayerModeButtonsSettings.storageKey) private var showsModeButtons = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heartFlash = false
     @State private var heartFlashTask: Task<Void, Never>?
@@ -390,11 +392,18 @@ struct NowPlayingFullView: View {
     }
 
     private var transportRow: some View {
-        HStack {
+        // With the mode buttons the skip buttons' (invisible) tap area narrows, so five
+        // controls fit in 393 pt; the glyphs keep their size.
+        let skipWidth: CGFloat = showsModeButtons ? 62 : 80
+        return HStack {
+            if showsModeButtons {
+                PlayerModeButton(kind: .shuffle, color: fg)
+                Spacer()
+            }
             Button(action: onBackward) {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 40))
-                    .frame(width: 80, height: 70)
+                    .frame(width: skipWidth, height: 70)
             }
             .accessibilityLabel("Precedente")
             Spacer()
@@ -409,13 +418,17 @@ struct NowPlayingFullView: View {
             Button(action: onForward) {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 40))
-                    .frame(width: 80, height: 70)
+                    .frame(width: skipWidth, height: 70)
             }
             .accessibilityLabel("Successivo")
+            if showsModeButtons {
+                Spacer()
+                PlayerModeButton(kind: .repeatMode, color: fg)
+            }
         }
         .buttonStyle(PressableStyle())
         .foregroundStyle(fg)
-        .padding(.horizontal, 22)
+        .padding(.horizontal, showsModeButtons ? 14 : 22)
     }
 
     #if os(iOS)
@@ -1115,6 +1128,49 @@ private struct HiddenVolumeView: UIViewRepresentable {
     func updateUIView(_ uiView: MPVolumeView, context: Context) {}
 }
 #endif
+
+/// Shuffle or repeat as a square toggle, filled when on, like the ones on the queue page.
+/// It listens to the shuffle flag on its own, so the player page isn't redrawn for it.
+private struct PlayerModeButton: View {
+    enum Kind { case shuffle, repeatMode }
+
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let kind: Kind
+    let color: Color
+    @State private var shuffled = false
+
+    private var isOn: Bool { kind == .shuffle ? shuffled : viewModel.repeatMode != .off }
+
+    var body: some View {
+        Button {
+            if kind == .shuffle {
+                withAnimation(.snappy) { viewModel.playerManager.toggleShuffle() }
+            } else {
+                viewModel.toggleRepeatMode()
+            }
+        } label: {
+            Image(systemName: kind == .shuffle ? "shuffle" : viewModel.repeatMode.iconName)
+                .font(.system(size: 16, weight: .semibold))
+                // On: the page's text color as fill, the icon in the opposite one.
+                .foregroundStyle(isOn ? (color == .black ? Color.white : Color.black) : color.opacity(0.8))
+                .frame(width: 40, height: 32)
+                .background(isOn ? color.opacity(0.9) : color.opacity(0.15),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .onReceive(viewModel.playerManager.$isShuffled) { shuffled = $0 }
+        .accessibilityLabel(kind == .shuffle ? "Casuale" : "Ripeti")
+        .accessibilityValue(kind == .shuffle ? (shuffled ? "attivo" : "spento")
+                            : (viewModel.repeatMode == .one ? "un brano" : viewModel.repeatMode == .all ? "tutti" : "spento"))
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// Settings → Aspetto: shuffle and repeat on the player's main page. In the settings backup.
+enum PlayerModeButtonsSettings {
+    static let storageKey = "playerShowsShuffleRepeat"
+}
 
 /// Settings → Aspetto: the player's heart turns pink only while it animates. In the settings backup.
 enum HeartFlashSettings {

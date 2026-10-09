@@ -292,7 +292,7 @@ struct HeroPlayControls: View {
 }
 
 /// A song row on a hero page: number, title (and a second line when useful), the
-/// moving wave when it plays, the length; long press for favorite and download.
+/// moving wave when it plays, the length; long press for favorite and download, swipe to queue.
 struct HeroTrackRow: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @ObservedObject private var downloadManager = DownloadManager.shared
@@ -408,5 +408,6 @@ struct HeroTrackRow: View {
                 }
             }
         }
+        .queueDragSwipe(track, background: palette.background)
     }
 }

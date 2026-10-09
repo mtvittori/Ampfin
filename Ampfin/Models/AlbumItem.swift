@@ -25,7 +25,7 @@ struct AlbumItem: Codable, Identifiable, Hashable {
         return Self.parseDate(raw)
     }
 
-    private static func parseDate(_ raw: String) -> Date? {
+    static func parseDate(_ raw: String) -> Date? {
         var text = raw
         if let dot = text.firstIndex(of: ".") {
             let rest = text[dot...].drop(while: { $0 == "." || $0.isNumber })
