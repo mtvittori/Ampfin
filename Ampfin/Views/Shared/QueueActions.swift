@@ -3,6 +3,9 @@
 // and albums, list swipe actions, and the little confirmation that drops in at the top.
 
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Confirmation
 
@@ -148,32 +151,27 @@ extension View {
 /// The same two swipes for rows that aren't in a List (the hero pages), where
 /// `.swipeActions` doesn't exist: right for "Dopo", left for "In coda". Past the
 /// threshold the action is armed (a tick); letting go there commits and the row springs
-/// back. The offset lives in a GestureState, so only this row redraws while dragging.
+/// back. The offset is @State of this modifier, so only this row redraws while dragging.
 private struct QueueDragSwipe: ViewModifier {
     @EnvironmentObject var viewModel: JellyfinViewModel
     let track: AudioItem
     /// The page color, to hide the action color behind the row while it is still.
     let background: Color
 
-    private struct Drag {
-        var x: CGFloat = 0
-        /// Decided once, on the first movement: a mostly vertical drag is a scroll.
-        var horizontal: Bool?
-    }
-    @GestureState private var drag = Drag()
+    @State private var dragX: CGFloat = 0
 
     private let threshold: CGFloat = 90
 
     /// The row's offset, with resistance past the threshold.
     private var offset: CGFloat {
-        let distance = abs(drag.x)
+        let distance = abs(dragX)
         let eased = distance <= threshold ? distance : threshold + (distance - threshold) * 0.3
-        return drag.x < 0 ? -eased : eased
+        return dragX < 0 ? -eased : eased
     }
 
     func body(content: Content) -> some View {
         let x = offset
-        let armed = abs(drag.x) >= threshold
+        let armed = abs(dragX) >= threshold
         content
             .background(x == 0 ? Color.clear : background)
             .offset(x: x)
@@ -181,19 +179,19 @@ private struct QueueDragSwipe: ViewModifier {
             .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: x)
             .sensoryFeedback(.impact(weight: .light), trigger: armed) { _, isArmed in isArmed }
             #if os(iOS)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 12)
-                    .updating($drag) { value, state, _ in
-                        let size = value.translation
-                        if state.horizontal == nil { state.horizontal = abs(size.width) > abs(size.height) * 2 }
-                        if state.horizontal == true { state.x = size.width }
+            .gesture(HorizontalPan { phase, translation in
+                switch phase {
+                case .changed:
+                    dragX = translation
+                case .ended:
+                    if abs(translation) >= threshold {
+                        if translation > 0 { viewModel.playNext([track]) } else { viewModel.addToQueue([track]) }
                     }
-                    .onEnded { value in
-                        let size = value.translation
-                        guard abs(size.width) >= threshold, abs(size.width) > abs(size.height) * 2 else { return }
-                        if size.width > 0 { viewModel.playNext([track]) } else { viewModel.addToQueue([track]) }
-                    }
-            )
+                    dragX = 0
+                default:
+                    dragX = 0
+                }
+            })
             #endif
     }
 
@@ -219,6 +217,36 @@ private struct QueueDragSwipe: ViewModifier {
             .accessibilityHidden(true)
     }
 }
+
+#if os(iOS)
+/// A UIKit pan that only begins on a clearly horizontal movement. A SwiftUI DragGesture
+/// inside a ScrollView can swallow the scroll view's pan (iOS 18+); here a vertical pan
+/// fails at once, so the ScrollView always wins for vertical scrolling.
+private struct HorizontalPan: UIGestureRecognizerRepresentable {
+    /// Called with the phase and the horizontal translation since the pan began.
+    let onChange: (UIGestureRecognizer.State, CGFloat) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.x) > abs(velocity.y) * 2
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        onChange(recognizer.state, recognizer.translation(in: recognizer.view).x)
+    }
+}
+#endif
 
 extension View {
     /// Swipe right for "Dopo", left for "In coda" on a row outside a List.
