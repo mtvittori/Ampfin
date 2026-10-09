@@ -66,24 +66,33 @@ final class MixStore: ObservableObject {
         let stale = historyFetched.map { Date().timeIntervalSince($0) > 600 } ?? true
         guard force || key != mixesKey || stale else { return }
 
-        guard let history = try? await api.fetchListeningHistory() else { return }
+        guard let history = try? await api.fetchListeningHistory(maxAge: force ? 0 : 120) else { return }
         historyFetched = Date()
 
+        // Thousands of songs: the input and the mixes are built away from the main thread,
+        // from copies of what the view model holds.
         let library = viewModel.audioItems
-        var artistNames: [String: String] = [:]
-        for item in library + history {
-            artistNames[item.Id] = viewModel.artistName(for: item) ?? ""
-        }
-        let input = MixEngine.Input(
-            library: library, history: history,
-            favoriteTrackIds: Set(viewModel.favoriteTracks.map(\.Id)),
-            recentAlbumIds: viewModel.recentlyAddedAlbums.map(\.Id),
-            artistNames: artistNames, userKey: viewModel.currentUserId, day: day,
-            albumGenres: Dictionary(viewModel.albums.compactMap { album in album.Genres.map { (album.Id, $0) } },
-                                    uniquingKeysWith: { first, _ in first })
-        )
-        // Thousands of songs: worked out away from the main thread.
-        let made = await Task.detached(priority: .utility) { MixEngine.mixes(input) }.value
+        let artistLookup = viewModel.artistNameLookup
+        let favoriteIds = viewModel.favoriteTrackIds
+        let recentAlbumIds = viewModel.recentlyAddedAlbums.map(\.Id)
+        let albums = viewModel.albums
+        let userKey = viewModel.currentUserId
+        let made = await Task.detached(priority: .utility) {
+            var artistNames: [String: String] = [:]
+            artistNames.reserveCapacity(library.count + history.count)
+            for item in library + history {
+                artistNames[item.Id] = artistLookup.name(for: item) ?? ""
+            }
+            let input = MixEngine.Input(
+                library: library, history: history,
+                favoriteTrackIds: Set(library.lazy.map(\.Id).filter(favoriteIds.contains)),
+                recentAlbumIds: recentAlbumIds,
+                artistNames: artistNames, userKey: userKey, day: day,
+                albumGenres: Dictionary(albums.compactMap { album in album.Genres.map { (album.Id, $0) } },
+                                        uniquingKeysWith: { first, _ in first })
+            )
+            return MixEngine.mixes(input)
+        }.value
         mixes = made
         mixesKey = key
     }

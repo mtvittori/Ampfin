@@ -113,17 +113,21 @@ final class ScrobbleStatsStore: ObservableObject {
             let now = Date()
             // The play counts and last plays of this user: the fallback, and the plays made
             // before the plugin was there. Also the names for the songs of the library.
-            let history = try await api.fetchListeningHistory()
-            var tracks: [String: ScrobbleTrack] = [:]
-            for item in viewModel.audioItems {
-                tracks[ScrobbleStatsBuilder.normalizedId(item.Id)] = track(item, in: viewModel)
-            }
-            for item in history {
-                var entry = track(item, in: viewModel)
-                entry.playCount = max(item.UserData?.PlayCount ?? 1, 1)
-                entry.lastPlayed = item.UserData?.lastPlayed
-                tracks[ScrobbleStatsBuilder.normalizedId(item.Id)] = entry
-            }
+            let history = try await api.fetchListeningHistory(maxAge: force ? 0 : 120)
+            // The library's songs are ready from the load (`scrobbleTracks`); the history adds
+            // the play counts. Worked out away from the main thread: ~10.000 ids to clean.
+            let libraryTracks = viewModel.scrobbleTracks
+            let artistLookup = viewModel.artistNameLookup
+            let played = await Task.detached(priority: .utility) {
+                var entries: [String: ScrobbleTrack] = [:]
+                for item in history {
+                    entries[ScrobbleStatsBuilder.normalizedId(item.Id)] = ScrobbleTrack(
+                        id: item.Id, title: item.Name, artist: artistLookup.name(for: item) ?? "",
+                        album: item.Album, albumId: item.AlbumId, duration: item.duration,
+                        playCount: max(item.UserData?.PlayCount ?? 1, 1), lastPlayed: item.UserData?.lastPlayed)
+                }
+                return entries
+            }.value
 
             // Every listen of the last 12 months, from the plugin.
             let uid = userId.replacingOccurrences(of: "-", with: "").lowercased()
@@ -144,18 +148,21 @@ final class ScrobbleStatsStore: ObservableObject {
             }
 
             // Listens of songs no longer in the library or the history: their names come from the server.
+            var extra: [String: ScrobbleTrack] = [:]
             let unknown = Set(rows.compactMap { $0.count >= 3 ? ScrobbleStatsBuilder.normalizedId($0[1]) : nil })
-                .filter { tracks[$0] == nil }
+                .filter { libraryTracks[$0] == nil && played[$0] == nil }
             if !unknown.isEmpty, let items = try? await api.fetchItems(ids: Array(unknown)) {
                 for item in items {
-                    tracks[ScrobbleStatsBuilder.normalizedId(item.Id)] = track(item, in: viewModel)
+                    extra[ScrobbleStatsBuilder.normalizedId(item.Id)] = track(item, in: viewModel)
                 }
             }
 
             // Thousands of listens: counted away from the main thread.
-            let snapshot = tracks
             let output = await Task.detached(priority: .utility) {
-                ScrobbleStatsBuilder.build(tracks: snapshot, rows: rows, approximate: approximate, now: now)
+                var tracks = libraryTracks
+                tracks.merge(played) { _, new in new }
+                tracks.merge(extra) { _, new in new }
+                return ScrobbleStatsBuilder.build(tracks: tracks, rows: rows, approximate: approximate, now: now)
             }.value
 
             // The user may have changed while this was loading.

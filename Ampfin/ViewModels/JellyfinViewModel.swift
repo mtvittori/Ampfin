@@ -12,16 +12,15 @@ class JellyfinViewModel: ObservableObject {
 
     // MARK: - Published Properties (Stato dell'UI)
     @Published private(set) var audioItems: [AudioItem] = []
-    @Published private(set) var albums: [AlbumItem] = [] {
-        didSet { albumArtistById = nil }
-    }
-    /// Album id → album artist, built once per library load (rows ask for it constantly).
-    private var albumArtistById: [String: String]?
+    @Published private(set) var albums: [AlbumItem] = []
+    /// Artist shown for a song, worked out with the library load (rows ask for it constantly).
+    /// A plain value: the mixes and statistics copy it into their background tasks.
+    private(set) var artistNameLookup = ArtistNameLookup()
+    /// The library's songs as the statistics want them, ready at load (see LibraryDerived).
+    private(set) var scrobbleTracks: [String: ScrobbleTrack] = [:]
     /// Artists after the merge rules (see ArtistMerge.swift); `rawArtists` is the server list.
     @Published private(set) var artists: [ArtistItem] = []
-    private var rawArtists: [ArtistItem] = [] {
-        didSet { rebuildArtistIndex() }
-    }
+    private var rawArtists: [ArtistItem] = []
     private var artistIndex = ArtistIndex.empty
     @Published private(set) var allAvailableGenres: [String] = []
     
@@ -488,6 +487,9 @@ class JellyfinViewModel: ObservableObject {
         audioItems = []
         albums = []
         rawArtists = []
+        rebuildArtistIndex()
+        artistNameLookup = ArtistNameLookup()
+        scrobbleTracks = [:]
         allAvailableGenres = []
         selectedAlbumTracks = []
         currentlyPlayingItem = nil
@@ -590,17 +592,16 @@ class JellyfinViewModel: ObservableObject {
             
             let (fetchedTracks, fetchedAlbums, fetchedArtists) = try await (tracks, albums, artists)
             
-            self.audioItems = fetchedTracks
-            self.albums = Self.newestFirst(fetchedAlbums)
-            self.rawArtists = fetchedArtists
-            self.allAvailableGenres = Array(Set(fetchedTracks.compactMap { $0.Genres }.flatMap { $0 })).sorted()
+            let derived = await LibraryDerived.make(tracks: fetchedTracks, albums: fetchedAlbums,
+                                                    rawArtists: fetchedArtists, genres: nil)
+            apply(derived)
 
             // Persist to disk cache
             LibraryCacheService.shared.saveLibrary(
-                tracks: self.audioItems,
-                albums: self.albums,
-                artists: self.rawArtists,
-                genres: self.allAvailableGenres
+                tracks: derived.tracks,
+                albums: derived.albums,
+                artists: derived.rawArtists,
+                genres: derived.genres
             )
             self.lastLibrarySyncDate = Date()
 
@@ -646,10 +647,8 @@ class JellyfinViewModel: ObservableObject {
         guard let cached = await LibraryCacheService.shared.loadLibrary() else {
             return false
         }
-        self.audioItems = cached.tracks
-        self.albums = Self.newestFirst(cached.albums)
-        self.rawArtists = cached.artists
-        self.allAvailableGenres = cached.genres
+        apply(await LibraryDerived.make(tracks: cached.tracks, albums: cached.albums,
+                                        rawArtists: cached.artists, genres: cached.genres))
         // A cache written before the albums (or the songs) carried their date: sync again
         // (the stale check sees no sync date), or "Aggiunti di recente" keeps the old order.
         let hasDates = cached.albums.contains { $0.DateCreated != nil }
@@ -659,10 +658,18 @@ class JellyfinViewModel: ObservableObject {
         return true
     }
 
-    /// Newest album first. Stable: albums with the same (or no) date keep the server's
-    /// order — Swift's sort isn't, and with no dates at all it shuffled the list.
-    private static func newestFirst(_ albums: [AlbumItem]) -> [AlbumItem] {
-        albums.sortedNewestFirst(by: \.dateAddedDate)
+    /// Hands a finished library load to the screens: everything is assigned in this one
+    /// turn of the main actor, so they redraw once, and nothing is computed here.
+    private func apply(_ library: LibraryDerived) {
+        audioItems = library.tracks
+        albums = library.albums
+        rawArtists = library.rawArtists
+        creditKeyCache = [:]
+        artistIndex = library.artistIndex
+        artists = library.artistIndex.artists
+        artistNameLookup = library.artistNames
+        scrobbleTracks = library.scrobbleTracks
+        allAvailableGenres = library.genres
     }
 
     /// Returns true if the library cache has expired based on the user's refresh interval.
@@ -770,11 +777,7 @@ class JellyfinViewModel: ObservableObject {
     func artistName(for item: AudioItem) -> String? {
         if let name = item.mainArtistName { return name }
         guard let albumId = item.AlbumId else { return nil }
-        if albumArtistById == nil {
-            albumArtistById = Dictionary(albums.compactMap { album in album.AlbumArtist.map { (album.Id, $0) } },
-                                         uniquingKeysWith: { first, _ in first })
-        }
-        return albumArtistById?[albumId]
+        return artistNameLookup.byAlbum[albumId]
     }
 
     func artist(named name: String?) -> ArtistItem? {
