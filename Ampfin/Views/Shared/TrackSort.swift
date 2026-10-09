@@ -30,13 +30,8 @@ enum TrackSort: String, CaseIterable, Identifiable {
                 return a.offset < b.offset
             }.map(\.element)
         case .added:
-            // Newest first; songs without a date (old cache) go last, in their order. Each
-            // date is read once, not at every comparison.
-            let dated = tracks.enumerated().map { (offset: $0.offset, track: $0.element,
-                                                   date: $0.element.dateAddedDate ?? .distantPast) }
-            return dated.sorted { a, b in
-                a.date != b.date ? a.date > b.date : a.offset < b.offset
-            }.map(\.track)
+            // Newest first; songs without a date (old cache) go last, in their order.
+            return tracks.sortedNewestFirst(by: \.dateAddedDate)
         }
     }
 
@@ -45,16 +40,21 @@ enum TrackSort: String, CaseIterable, Identifiable {
     static func monthSections(_ tracks: [AudioItem]) -> [LetterSection<AudioItem>] {
         var sections: [LetterSection<AudioItem>] = []
         var current: (label: String, items: [AudioItem])?
-        var lastMonth: DateComponents?
+        // Songs come newest first, so most of them fall in the month already open: a date
+        // inside its interval skips the calendar (8.000 component lookups were ~50 ms).
+        var openMonth: DateInterval?
         let calendar = Calendar.current
 
         for track in tracks {
             let date = track.dateAddedDate
-            let month = date.map { calendar.dateComponents([.year, .month], from: $0) }
-            if current == nil || month != lastMonth {
+            // DateInterval.contains counts its end, which is already the next month.
+            let sameMonth = date.map { day in openMonth.map { day >= $0.start && day < $0.end } ?? false } ?? false
+            // A song with no date starts "Senza data" once, then joins it.
+            let sameUndated = date == nil && current?.label == "Senza data"
+            if current == nil || !(sameMonth || sameUndated) {
                 if let current { sections.append(LetterSection(letter: current.label, items: current.items)) }
                 current = (date.map(monthLabel) ?? "Senza data", [])
-                lastMonth = month
+                openMonth = date.flatMap { calendar.dateInterval(of: .month, for: $0) }
             }
             current?.items.append(track)
         }

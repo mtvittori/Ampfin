@@ -18,27 +18,16 @@ struct AlbumItem: Codable, Identifiable, Hashable {
     var PremiereDate: String?
     var premiereDateValue: Date? { PremiereDate.flatMap(Self.parseDate) }
 
-    /// Sorting 1.000 albums by this parses each date many times: the formatter is shared,
-    /// and the fraction (Jellyfin sends 7 digits) is dropped, as the formatter wants 3 or none.
+    /// Parsed on every call (no stored copy, so the Codable shape stays); cheap enough to
+    /// call per row, but sorts should still read each date once (see `JellyfinDate`).
     var dateAddedDate: Date? {
         guard let raw = DateCreated ?? DateAdded else { return nil }
         return Self.parseDate(raw)
     }
 
     static func parseDate(_ raw: String) -> Date? {
-        var text = raw
-        if let dot = text.firstIndex(of: ".") {
-            let rest = text[dot...].drop(while: { $0 == "." || $0.isNumber })
-            text = String(text[..<dot]) + rest
-        }
-        if !text.hasSuffix("Z"), !text.contains("+") { text += "Z" }
-        return dateParser.date(from: text)
+        JellyfinDate.parse(raw)
     }
-    private static let dateParser: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
 
     // Necessario per usare AlbumItem con NavigationLink(value: ...)
     func hash(into hasher: inout Hasher) {

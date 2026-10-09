@@ -148,16 +148,35 @@ final class HomeGreeting: ObservableObject {
 
     // MARK: - Candidates
 
+    /// Release day of every album in the device's time zone, worked out once per library
+    /// and zone: the Home refreshes this at every appearance and each hour.
+    private struct ReleaseDays {
+        let key: String
+        let entries: [(year: Int, month: Int, day: Int, name: String)]
+    }
+    private var releaseDays: ReleaseDays?
+
+    private func releaseDays(of albums: [AlbumItem], calendar: Calendar) -> [(year: Int, month: Int, day: Int, name: String)] {
+        let key = "\(albums.count)|\(albums.first?.Id ?? "")|\(albums.last?.Id ?? "")|\(calendar.timeZone.identifier)"
+        if let cached = releaseDays, cached.key == key { return cached.entries }
+        let entries = albums.compactMap { album -> (year: Int, month: Int, day: Int, name: String)? in
+            guard let released = album.premiereDateValue else { return nil }
+            let parts = calendar.dateComponents([.year, .month, .day], from: released)
+            guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
+            return (year, month, day, album.Name)
+        }
+        releaseDays = ReleaseDays(key: key, entries: entries)
+        return entries
+    }
+
     /// Albums released on today's day and month, in the device's time zone.
     private func anniversaries(_ albums: [AlbumItem], now: Date, calendar: Calendar) -> [String] {
         let today = calendar.dateComponents([.year, .month, .day], from: now)
         var found: [(years: Int, name: String)] = []
-        for album in albums {
-            guard let released = album.premiereDateValue else { continue }
-            let parts = calendar.dateComponents([.year, .month, .day], from: released)
-            guard parts.month == today.month, parts.day == today.day,
-                  let year = parts.year, let current = today.year, current > year else { continue }
-            found.append((current - year, album.Name))
+        for album in releaseDays(of: albums, calendar: calendar) {
+            guard album.month == today.month, album.day == today.day,
+                  let current = today.year, current > album.year else { continue }
+            found.append((current - album.year, album.name))
         }
         // The oldest first, at most three, so the line stays rare and special.
         return found.sorted { $0.years > $1.years }.prefix(3).map { item in
