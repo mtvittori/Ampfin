@@ -192,7 +192,7 @@ final class DownloadManager: NSObject {
     }
 
     private func start(item: AudioItem, streamURL: URL) {
-        let container = item.MediaSources?.first?.Container
+        let container = item.containerName
         let task = JellyfinAPIService.urlSession.downloadTask(with: streamURL) { [weak self] tempURL, _, error in
             // Move file IMMEDIATELY (still on the session's queue): the temp file is deleted
             // after this closure returns.

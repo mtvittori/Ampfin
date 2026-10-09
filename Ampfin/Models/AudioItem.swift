@@ -38,6 +38,11 @@ struct AudioItem: Codable, Identifiable {
     let RunTimeTicks: Int64?
     let AlbumId: String?
     let Genres: [String]?
+    /// File container ("flac", "mp3") as Jellyfin sends it for every item, without asking for
+    /// MediaSources. Optional: old caches lack it.
+    let Container: String?
+    /// Codec, rate and bit depth of the file. Big (every embedded cover and lyric is a stream),
+    /// so the lists don't ask for it: read it through `mediaSources`.
     let MediaSources: [MediaSourceInfo]?
     /// The user's plays and favorite flag, when the server sends them (per user).
     let UserData: UserItemData?
@@ -55,14 +60,33 @@ struct AudioItem: Codable, Identifiable {
         return TimeInterval(ticks) / 10_000_000.0
     }
     
+    /// The media sources the item came with, or the ones fetched for this song (see
+    /// `MediaInfoCache`): the player, the quality badge and the downloads read this.
+    var mediaSources: [MediaSourceInfo]? {
+        MediaSources ?? MediaInfoCache.shared.sources(for: Id)
+    }
+
+    /// Lowercase container of the file, nil when unknown.
+    var containerName: String? {
+        // The cache last: rows ask for this at every redraw, and the item has it already.
+        let raw = MediaSources?.first?.Container ?? Container ?? MediaInfoCache.shared.sources(for: Id)?.first?.Container
+        guard let raw, !raw.isEmpty else { return nil }
+        // ffprobe names MP4 files "mov,mp4,m4a,3gp,3g2,mj2": the one that fits an audio file.
+        if raw.contains(",") {
+            let names = raw.lowercased().split(separator: ",").map(String.init)
+            return names.contains("m4a") ? "m4a" : names.first
+        }
+        return raw.lowercased()
+    }
+
     var isLossless: Bool {
-        guard let container = MediaSources?.first?.Container?.lowercased() else { return false }
+        guard let container = containerName else { return false }
         return container == "flac" || container == "alac"
     }
 
     /// The audio stream of the first media source (not the embedded cover, which is a "video" stream).
     var sourceAudioStream: MediaStreamInfo? {
-        MediaSources?.first?.MediaStreams?.first {
+        mediaSources?.first?.MediaStreams?.first {
             $0.streamType == "Audio" || ($0.streamType == nil && $0.SampleRate != nil)
         }
     }
@@ -81,8 +105,8 @@ struct AudioItem: Codable, Identifiable {
     /// `convertedTo48k` appends " → 48 kHz" when the song is being played through the conversion.
     func qualityLabel(convertedTo48k: Bool = false) -> String? {
         let stream = sourceAudioStream
-        let source = MediaSources?.first
-        let codecName = (stream?.Codec ?? source?.Container)?.lowercased()
+        let source = mediaSources?.first
+        let codecName = (stream?.Codec ?? containerName)?.lowercased()
         guard let codecName, !codecName.isEmpty else { return nil }
 
         var parts = [codecName.uppercased()]
@@ -113,16 +137,8 @@ struct UserItemData: Codable, Hashable {
     let IsFavorite: Bool?
     let Played: Bool?
 
-    /// LastPlayedDate as a date. Jellyfin writes seven decimals ("…:12.1234567Z"), which
-    /// ISO8601DateFormatter doesn't read, so the seconds are cut first.
+    /// LastPlayedDate as a date (Jellyfin writes seven decimals, which `JellyfinDate` skips).
     var lastPlayed: Date? {
-        guard let raw = LastPlayedDate, raw.count >= 19 else { return nil }
-        return Self.parser.date(from: String(raw.prefix(19)) + "Z")
+        LastPlayedDate.flatMap(JellyfinDate.parse)
     }
-
-    private static let parser: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
 }

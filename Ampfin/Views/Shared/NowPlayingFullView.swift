@@ -413,7 +413,7 @@ struct NowPlayingFullView: View {
     /// Without media info it falls back to the old "Lossless" / container name.
     private var qualityText: String {
         item.qualityLabel(convertedTo48k: viewModel.playerManager?.isDownsampledStream ?? false)
-            ?? (item.isLossless ? "Lossless" : (item.MediaSources?.first?.Container?.uppercased() ?? "Audio"))
+            ?? (item.isLossless ? "Lossless" : (item.containerName?.uppercased() ?? "Audio"))
     }
 
     private var transportRow: some View {

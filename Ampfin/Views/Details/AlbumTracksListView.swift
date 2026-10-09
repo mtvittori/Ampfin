@@ -230,7 +230,7 @@ private struct TrackInfoSheet: View {
                 }
 
                 // Audio details
-                if let mediaSource = track.MediaSources?.first {
+                if let mediaSource = track.mediaSources?.first {
                     Section("Dettagli audio") {
                         if let container = mediaSource.Container {
                             infoRow("Formato", value: container.uppercased())

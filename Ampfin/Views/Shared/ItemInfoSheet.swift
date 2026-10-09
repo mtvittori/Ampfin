@@ -120,11 +120,11 @@ struct ItemInfoSheet: View {
         add(&general, "Descrizione", json["Overview"] as? String)
 
         var file: [(String, String)] = []
-        let containers = Set(tracks.compactMap { $0.MediaSources?.first?.Container?.uppercased() })
+        let containers = Set(tracks.compactMap { $0.containerName?.uppercased() })
         add(&file, "Formati", containers.sorted().joined(separator: ", "))
-        let rates = Set(tracks.compactMap { $0.MediaSources?.first?.MediaStreams?.first?.SampleRate })
+        let rates = Set(tracks.compactMap { $0.mediaSources?.first?.MediaStreams?.first?.SampleRate })
         add(&file, "Frequenze", rates.sorted().map { AudioInfoFormat.sampleRate(Double($0)) }.joined(separator: ", "))
-        let depths = Set(tracks.compactMap { $0.MediaSources?.first?.MediaStreams?.first?.BitDepth })
+        let depths = Set(tracks.compactMap { $0.mediaSources?.first?.MediaStreams?.first?.BitDepth })
         add(&file, "Profondità", depths.sorted().map { "\($0) bit" }.joined(separator: ", "))
         add(&file, "Percorso", json["Path"] as? String)
         add(&file, "Aggiunto il", date(json["DateCreated"]))

@@ -662,12 +662,7 @@ class JellyfinViewModel: ObservableObject {
     /// Newest album first. Stable: albums with the same (or no) date keep the server's
     /// order — Swift's sort isn't, and with no dates at all it shuffled the list.
     private static func newestFirst(_ albums: [AlbumItem]) -> [AlbumItem] {
-        let dated: [(offset: Int, date: Date)] = albums.indices.map { ($0, albums[$0].dateAddedDate ?? .distantPast) }
-        let order = dated.sorted { a, b in
-            if a.date != b.date { return a.date > b.date }
-            return a.offset < b.offset
-        }
-        return order.map { albums[$0.offset] }
+        albums.sortedNewestFirst(by: \.dateAddedDate)
     }
 
     /// Returns true if the library cache has expired based on the user's refresh interval.
@@ -969,6 +964,15 @@ class JellyfinViewModel: ObservableObject {
             },
             artworkURLProvider: api.artworkURL(for:size:)
         )
+        // The lists carry no sample rate: it is fetched before a hi-res song picks its URL,
+        // and for the quality badge of whatever plays.
+        playerManager.streamNeedsMediaInfo = { [weak self] item in
+            guard Self.hiResTo48kEnabled, self?.currentStreamQuality().bitrate == nil else { return false }
+            return downloads.localURL(for: item.Id) == nil
+        }
+        playerManager.mediaInfoLoader = { item in
+            _ = await api.fetchMediaSources(itemId: item.Id)
+        }
         // Autoplay's similar songs come from Jellyfin's Instant Mix.
         playerManager.similarProvider = { item in
             (try? await api.fetchInstantMix(itemId: item.Id)) ?? []

@@ -141,7 +141,7 @@ class JellyfinAPIService {
     func fetchRecentlyPlayedTracks() async throws -> [AudioItem] {
         let libraryIds = try await fetchMusicLibraryIds()
         let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
-            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
         }
         return Array(Self.mostRecentlyPlayed(tracks).prefix(20))
     }
@@ -180,6 +180,8 @@ class JellyfinAPIService {
     }
 
     private func postSession(_ path: String, body: [String: Any]) async throws {
+        // A listen changes the history (last played, count): the next read must ask again.
+        locked { historyCache = nil }
         guard let url = URL(string: "\(serverUrl)\(path)") else {
             throw APIError.invalidURL
         }
@@ -210,17 +212,40 @@ class JellyfinAPIService {
 
     /// Every music library the user can see (/Views is per user, so a library hidden from
     /// this account never shows up), whether or not it is switched on in Settings.
+    /// Always asks the server (Settings shows it), and refreshes the copy the syncs use.
     func fetchMusicLibraries() async throws -> [LibraryView] {
         let response: UserViewsResponse = try await fetch(endpoint: "/Users/\(userId)/Views")
-        return response.Items.filter { $0.CollectionType == "music" }
+        let libraries = response.Items.filter { $0.CollectionType == "music" }
+        locked { librariesCache = (Date(), libraries) }
+        return libraries
     }
+
+    /// The same list for the syncs: one sync used to ask for it three times, and the
+    /// libraries of a server hardly change. Which ones are on is read at every call, so
+    /// switching one in Settings needs no refresh here.
+    private func cachedMusicLibraries() async throws -> [LibraryView] {
+        if let cached = locked({ librariesCache }), Date().timeIntervalSince(cached.at) < Self.librariesMaxAge {
+            return cached.libraries
+        }
+        return try await fetchMusicLibraries()
+    }
+    private static let librariesMaxAge: TimeInterval = 300
+    private var librariesCache: (at: Date, libraries: [LibraryView])?
 
     /// The music libraries to use: the visible ones that are switched on in Settings.
     /// /Items takes a single ParentId, hence one query per library.
     func fetchMusicLibraryIds() async throws -> [String] {
-        let all = try await fetchMusicLibraries()
+        let all = try await cachedMusicLibraries()
         if all.isEmpty { throw APIError.invalidResponse(404) } // Simula un "not found"
         return MusicLibrarySelection.enabled(from: all, scope: librarySelectionScope).map(\.Id)
+    }
+
+    /// The service is used from several tasks at once.
+    private let stateLock = NSLock()
+    private func locked<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
     }
 
     /// Runs the same query on each library at once and joins the answers, one copy per Id.
@@ -244,16 +269,16 @@ class JellyfinAPIService {
     }
 
     private static func newestAdded(_ albums: [AlbumItem]) -> [AlbumItem] {
-        albums.sorted { ($0.dateAddedDate ?? .distantPast) > ($1.dateAddedDate ?? .distantPast) }
+        albums.sortedNewestFirst(by: \.dateAddedDate)
     }
 
     private static func mostRecentlyPlayed(_ tracks: [AudioItem]) -> [AudioItem] {
-        tracks.sorted { ($0.UserData?.lastPlayed ?? .distantPast) > ($1.UserData?.lastPlayed ?? .distantPast) }
+        tracks.sortedNewestFirst(by: { $0.UserData?.lastPlayed })
     }
 
     func fetchTracks(from libraryIds: [String]) async throws -> [AudioItem] {
         let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
-            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres,DateCreated&SortBy=SortName"
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,AlbumId,Genres,DateCreated&SortBy=SortName"
         }
         // Each library comes sorted; with several, the join has to be sorted again
         guard libraryIds.count > 1 else { return tracks }
@@ -275,7 +300,7 @@ class JellyfinAPIService {
     func fetchArtists(from libraryIds: [String]) async throws -> [ArtistItem] {
         let endpoint = "/Users/\(userId)/Items?IncludeItemTypes=MusicArtist&Recursive=true&SortBy=SortName"
         async let everyone: ArtistResponse = fetch(endpoint: endpoint)
-        let total = try await fetchMusicLibraries().count
+        let total = try await cachedMusicLibraries().count
         guard libraryIds.count < total else { return try await everyone.Items }
         let inLibraries = try await fetchMerged(ArtistResponse.self, from: libraryIds) { id in
             "/Artists?userId=\(userId)&ParentId=\(id)"
@@ -301,7 +326,7 @@ class JellyfinAPIService {
 
     /// The songs of a playlist, in its order, with each entry's id (to remove it).
     func fetchPlaylistItems(playlistId: String) async throws -> [AudioItem] {
-        let endpoint = "/Playlists/\(playlistId)/Items?UserId=\(userId)&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+        let endpoint = "/Playlists/\(playlistId)/Items?UserId=\(userId)&Fields=AlbumArtists,Artists,AlbumId,Genres"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -355,10 +380,31 @@ class JellyfinAPIService {
 
     /// The songs this user has played, most recent first, with play count and last date:
     /// what the mixes are worked out from. Each user gets their own.
-    func fetchListeningHistory(limit: Int = 2000) async throws -> [AudioItem] {
+    /// The Home's mixes and the statistics both ask for it at start-up: one request is shared
+    /// (also while it is still running) and kept for `maxAge`; a report of a listen drops it.
+    func fetchListeningHistory(limit: Int = 2000, maxAge: TimeInterval = 120) async throws -> [AudioItem] {
+        let task = locked { () -> Task<[AudioItem], Error> in
+            if let cached = historyCache, cached.limit == limit, Date().timeIntervalSince(cached.at) < maxAge {
+                return cached.task
+            }
+            let task = Task { try await self.loadListeningHistory(limit: limit) }
+            historyCache = (limit, Date(), task)
+            return task
+        }
+        do {
+            return try await task.value
+        } catch {
+            // A failure is not kept for the next caller.
+            locked { if historyCache?.task == task { historyCache = nil } }
+            throw error
+        }
+    }
+    private var historyCache: (limit: Int, at: Date, task: Task<[AudioItem], Error>)?
+
+    private func loadListeningHistory(limit: Int) async throws -> [AudioItem] {
         let libraryIds = try await fetchMusicLibraryIds()
         let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
-            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=\(limit)&EnableUserData=true&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=\(limit)&EnableUserData=true&Fields=AlbumArtists,Artists,AlbumId,Genres"
         }
         return libraryIds.count > 1 ? Array(Self.mostRecentlyPlayed(tracks).prefix(limit)) : tracks
     }
@@ -463,9 +509,33 @@ class JellyfinAPIService {
 
     /// Songs similar to this one (Jellyfin's Instant Mix), without the song itself.
     func fetchInstantMix(itemId: String, limit: Int = 30) async throws -> [AudioItem] {
-        let endpoint = "/Items/\(itemId)/InstantMix?userId=\(userId)&limit=\(limit)&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres"
+        let endpoint = "/Items/\(itemId)/InstantMix?userId=\(userId)&limit=\(limit)&Fields=AlbumArtists,Artists,AlbumId,Genres"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items.filter { $0.Id != itemId }
+    }
+
+    // MARK: - Media info
+
+    /// Codec, rate and bit depth of one song, which the library lists leave out. Kept in
+    /// `MediaInfoCache`; nil when the server doesn't answer (callers fall back to what they
+    /// know: the stream then plays as the original).
+    func fetchMediaSources(itemId: String) async -> [MediaSourceInfo]? {
+        if let known = MediaInfoCache.shared.sources(for: itemId) { return known }
+        guard let url = URL(string: "\(serverUrl)/Users/\(userId)/Items/\(itemId)?Fields=MediaSources") else { return nil }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        // Playback waits for this on hi-res songs: a slow server must not hold it for a minute.
+        request.timeoutInterval = 5
+        do {
+            let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
+            struct Response: Decodable { let MediaSources: [MediaSourceInfo]? }
+            guard let sources = try JSONDecoder().decode(Response.self, from: data).MediaSources, !sources.isEmpty else { return nil }
+            MediaInfoCache.shared.store(sources, for: itemId)
+            return sources
+        } catch {
+            return nil
+        }
     }
 
     // MARK: - Item details

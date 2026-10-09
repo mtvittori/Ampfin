@@ -89,6 +89,14 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     private var streamURLProvider: ((AudioItem) -> URL?)?
+    /// Whether the stream for this song depends on its sample rate (hi-res converted to
+    /// 48 kHz), which the library lists don't carry; set by the view model.
+    var streamNeedsMediaInfo: ((AudioItem) -> Bool)?
+    /// Fetches the song's codec, rate and bit depth into `MediaInfoCache`; set by the view model.
+    var mediaInfoLoader: ((AudioItem) async -> Void)?
+    /// A play request waiting for the media info of its song.
+    private var pendingPlay: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
     var artworkURLProvider: ((String, Int) -> URL?)?
 
     /// Reports to the Jellyfin server that an item was played (updates its LastPlayedDate,
@@ -140,6 +148,23 @@ final class AudioPlayerManager: ObservableObject {
     // MARK: - Playback
 
     func play(item: AudioItem, in queue: [AudioItem]) {
+        pendingPlay?.cancel()
+        pendingPlay = nil
+        // Hi-res files are asked for converted to 48 kHz, so the rate has to be known before
+        // choosing the URL: one small request (it gives up after 5 s and plays the original).
+        if streamNeedsMediaInfo?(item) == true, item.sourceSampleRate == nil, let loader = mediaInfoLoader {
+            pendingPlay = Task { @MainActor [weak self] in
+                await loader(item)
+                guard !Task.isCancelled, let self else { return }
+                self.pendingPlay = nil
+                self.startPlayback(item: item, in: queue)
+            }
+            return
+        }
+        startPlayback(item: item, in: queue)
+    }
+
+    private func startPlayback(item: AudioItem, in queue: [AudioItem]) {
         guard let url = streamURLProvider?(item) else {
             print("Errore: URL per lo streaming non valido.")
             return
@@ -162,9 +187,23 @@ final class AudioPlayerManager: ObservableObject {
         isPlaying = true
         updateNowPlayingInfo()
         scheduleReportPlayed(for: item)
+        loadMediaInfoForBadge(of: item)
 
         // Download audio to temp file, then play via AVAudioEngine
         downloadAndPlay(url: url, item: item, generation: loadGeneration)
+    }
+
+    /// The quality badge and the output info read the song's media info, which the lists
+    /// don't carry: fetched in the background, then the player is told to read it again.
+    private func loadMediaInfoForBadge(of item: AudioItem) {
+        guard item.mediaSources == nil, let loader = mediaInfoLoader else { return }
+        Task { @MainActor [weak self] in
+            await loader(item)
+            guard let self, self.currentlyPlayingItem?.Id == item.Id, item.mediaSources != nil else { return }
+            // Same song: published again so the views read its quality.
+            self.currentlyPlayingItem = item
+            self.refreshAudioOutputInfo()
+        }
     }
 
     /// Reports the item as played once it's had a few seconds of genuine playback,
@@ -295,10 +334,18 @@ final class AudioPlayerManager: ObservableObject {
     /// Fetches the next song of the queue while this one plays, so "next" and the
     /// automatic advance start without waiting.
     private func prefetchNext() {
-        guard let next = upNext.first,
-              let url = streamURLProvider?(next), !url.isFileURL else { return }
-        let cache = AudioStreamCache.shared
-        cache.prefetch(url, key: cache.key(itemId: next.Id, url: url))
+        guard let next = upNext.first else { return }
+        prefetchTask?.cancel()
+        prefetchTask = Task { @MainActor [weak self] in
+            // Same choice of URL as play: a hi-res song prefetched as the original would be wasted.
+            if let self, self.streamNeedsMediaInfo?(next) == true, next.sourceSampleRate == nil {
+                await self.mediaInfoLoader?(next)
+            }
+            guard !Task.isCancelled, let self, self.upNext.first?.Id == next.Id,
+                  let url = self.streamURLProvider?(next), !url.isFileURL else { return }
+            let cache = AudioStreamCache.shared
+            cache.prefetch(url, key: cache.key(itemId: next.Id, url: url))
+        }
     }
 
     /// Opens the song's file and wires the engine for its format. Nothing plays here.
@@ -712,6 +759,9 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func stop() {
+        pendingPlay?.cancel()
+        pendingPlay = nil
+        prefetchTask?.cancel()
         playedReportTask?.cancel()
         downloadTask?.cancel()
         downloadTask = nil
@@ -885,7 +935,7 @@ final class AudioPlayerManager: ObservableObject {
             isDirectStream = true
             return
         }
-        if let container = item.MediaSources?.first?.Container?.uppercased() {
+        if let container = item.containerName?.uppercased() {
             currentCodec = container
         } else {
             currentCodec = ""
@@ -901,7 +951,7 @@ final class AudioPlayerManager: ObservableObject {
         }
 
         // 1. Try Jellyfin API metadata first (most reliable)
-        if let mediaSource = currentlyPlayingItem?.MediaSources?.first {
+        if let mediaSource = currentlyPlayingItem?.mediaSources?.first {
             if let apiBitrate = mediaSource.Bitrate, apiBitrate > 0 {
                 currentBitrate = Double(apiBitrate) / 1000.0
             }
