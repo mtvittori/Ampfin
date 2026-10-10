@@ -51,24 +51,36 @@ struct SettingsView: View {
 
     var body: some View {
         #if os(macOS)
-        // The Mac keeps a single flat list with every section.
-        List {
-            accentSection
-            glassSection
-            audioOutputSection
-            equalizerSection
-            streamingSection
-            audioInfoSections
-            accountSection
-            downloadsSection
-            cacheSection
-            backupSection
-            artistsSection
-            musicLibrariesSection
-            librarySyncSection
-            aboutSection
+        // Mac settings idiom: toolbar tabs, one grouped form each, same grouping as the iOS pages.
+        // Each tab has its own stack so the NavigationLinks inside the sections keep working.
+        TabView {
+            macTab("Account", icon: "person.crop.circle") {
+                accountSection
+            }
+            macTab("Aspetto", icon: "swatchpalette") {
+                accentSection
+                glassSection
+            }
+            macTab("Audio", icon: "hifispeaker") {
+                audioOutputSection
+                equalizerSection
+                streamingSection
+                audioInfoSections
+            }
+            macTab("Libreria", icon: "music.note.square.stack") {
+                musicLibrariesSection
+                librarySyncSection
+                artistsSection
+                downloadsSection
+                cacheSection
+            }
+            macTab("Backup", icon: "arrow.clockwise.icloud") {
+                backupSection
+            }
+            macTab("Info", icon: "info.circle") {
+                aboutSection
+            }
         }
-        .navigationTitle("Impostazioni")
         .onAppear(perform: onPageAppear)
         #else
         // iOS: account and info inline, the rest in pages like the system Settings app.
@@ -119,6 +131,18 @@ struct SettingsView: View {
         .onAppear(perform: onPageAppear)
         #endif
     }
+
+    #if os(macOS)
+    private func macTab<Content: View>(_ title: String, icon: String,
+                                       @ViewBuilder content: () -> Content) -> some View {
+        NavigationStack {
+            Form { content() }
+                .formStyle(.grouped)
+                .navigationTitle(title)
+        }
+        .tabItem { Label(title, systemImage: icon) }
+    }
+    #endif
 
     #if os(iOS)
     /// A row of the main list that pushes a Form page. The pages are built here so they share this view's state.

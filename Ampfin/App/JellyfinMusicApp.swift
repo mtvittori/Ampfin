@@ -20,12 +20,10 @@ struct JellyfinMusicApp: App {
 
         // ⌘, as in every Mac app.
         Settings {
-            NavigationStack {
-                SettingsView()
-            }
-            .environmentObject(viewModel)
-            .tint(colorManager.effectiveTint)
-            .frame(width: 600, height: 700)
+            SettingsView()
+                .environmentObject(viewModel)
+                .tint(colorManager.effectiveTint)
+                .frame(width: 640, height: 640)
         }
     }
 }
