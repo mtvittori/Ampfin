@@ -194,8 +194,15 @@ final class DRAnalyzer: ObservableObject {
         #endif
     }
 
+    /// Songs waiting in the run or being measured by it (rows show a spinner for these).
+    @Published private(set) var active: Set<String> = []
+
     private var api: JellyfinAPIService?
     private var runTask: Task<Void, Never>?
+    /// What the run measures; songs chosen by hand are appended while it runs. `runNext` is
+    /// the first one not started yet.
+    private var runQueue: [AudioItem] = []
+    private var runNext = 0
     /// Songs being measured right now, by the run or by the automatic queue: never twice.
     private var measuring: Set<String> = []
     private var autoQueue: [String] = []
@@ -216,6 +223,8 @@ final class DRAnalyzer: ObservableObject {
         }
     }
 
+    func isQueuedOrMeasuring(_ itemId: String) -> Bool { active.contains(itemId) }
+
     /// Measures every song in `items` that has no DR yet (on iOS only those with a local file).
     func start(items: [AudioItem]) {
         guard !isRunning else { return }
@@ -226,12 +235,42 @@ final class DRAnalyzer: ObservableObject {
                 && (analyzesWholeLibrary || hasLocalFile(item.Id))
         }
         guard !queue.isEmpty else { return }
+        begin(queue)
+    }
+
+    /// Measures exactly these songs, chosen by the user: on iOS too the ones without a local
+    /// file are downloaded to a temporary file. Songs already queued or being measured are
+    /// skipped, and so are the measured ones unless `remeasure` (the old value stays until the
+    /// new one replaces it). During a run they join it, otherwise a run starts.
+    func enqueue(items: [AudioItem], remeasure: Bool = false) {
+        // A stopped run is still winding down: it would drop what we append.
+        if runTask?.isCancelled == true { return }
+        let results = DRStore.shared.results
+        var seen = Set<String>()
+        let fresh = items.filter { item in
+            (remeasure || results[item.Id] == nil) && !active.contains(item.Id)
+                && !measuring.contains(item.Id) && seen.insert(item.Id).inserted
+        }
+        guard !fresh.isEmpty else { return }
+        if isRunning {
+            runQueue.append(contentsOf: fresh)
+            active.formUnion(fresh.map(\.Id))
+            total += fresh.count
+        } else {
+            begin(fresh)
+        }
+    }
+
+    private func begin(_ queue: [AudioItem]) {
         isRunning = true
         done = 0
         total = queue.count
         currentTitle = nil
         lastError = nil
-        runTask = Task { await run(queue) }
+        runQueue = queue
+        runNext = 0
+        active = Set(queue.map(\.Id))
+        runTask = Task { await run() }
     }
 
     func stop() {
@@ -241,42 +280,51 @@ final class DRAnalyzer: ObservableObject {
 
     // MARK: - Run
 
-    private func run(_ queue: [AudioItem]) async {
+    private func run() async {
         // The Mac is busy downloading too; the phone only reads files, one at a time.
         let limit = analyzesWholeLibrary ? 2 : 1
-        var next = 0
         var inFlight = 0
         var failures = 0
-        await withTaskGroup(of: Outcome.self) { group in
-            while true {
-                while inFlight < limit, next < queue.count, !Task.isCancelled {
-                    let item = queue[next]
-                    next += 1
-                    guard measuring.insert(item.Id).inserted else {
-                        done += 1  // the automatic queue has it
-                        continue
+        // The outer loop catches songs enqueued just as the group was finishing.
+        repeat {
+            await withTaskGroup(of: Outcome.self) { group in
+                while true {
+                    while inFlight < limit, runNext < runQueue.count, !Task.isCancelled {
+                        let item = runQueue[runNext]
+                        runNext += 1
+                        guard measuring.insert(item.Id).inserted else {
+                            done += 1  // the automatic queue has it
+                            active.remove(item.Id)
+                            continue
+                        }
+                        currentTitle = item.Name
+                        let job = makeJob(for: item)
+                        group.addTask { await Self.measure(job) }
+                        inFlight += 1
                     }
-                    currentTitle = item.Name
-                    let job = makeJob(for: item)
-                    group.addTask { await Self.measure(job) }
-                    inFlight += 1
-                }
-                guard inFlight > 0, let outcome = await group.next() else { break }
-                inFlight -= 1
-                measuring.remove(outcome.id)
-                switch outcome.result {
-                case .success(let value):
-                    DRStore.shared.record(outcome.id, DRResult(value: value, measured: Date()))
-                    done += 1
-                case .failure(let error):
-                    if error is CancellationError { break }
-                    failures += 1
-                    done += 1
-                    let reason = error.localizedDescription
-                    lastError = failures == 1 ? "\(outcome.title): \(reason)" : "\(failures) brani non misurati, ultimo \(outcome.title): \(reason)"
+                    guard inFlight > 0, let outcome = await group.next() else { break }
+                    inFlight -= 1
+                    measuring.remove(outcome.id)
+                    active.remove(outcome.id)
+                    switch outcome.result {
+                    case .success(let value):
+                        DRStore.shared.record(outcome.id, DRResult(value: value, measured: Date()))
+                        done += 1
+                    case .failure(let error):
+                        if error is CancellationError { break }
+                        failures += 1
+                        done += 1
+                        let reason = error.localizedDescription
+                        lastError = failures == 1 ? "\(outcome.title): \(reason)" : "\(failures) brani non misurati, ultimo \(outcome.title): \(reason)"
+                    }
                 }
             }
-        }
+        } while runNext < runQueue.count && !Task.isCancelled
+
+        // Whatever was left after a stop is not waiting any more.
+        active.subtract(runQueue[runNext...].map(\.Id))
+        runQueue = []
+        runNext = 0
         isRunning = false
         currentTitle = nil
         runTask = nil

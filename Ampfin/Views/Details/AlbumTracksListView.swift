@@ -134,6 +134,7 @@ struct AlbumTracksListView: View {
 
         return Menu {
             QueueMenuItems(tracks: tracks)
+            DRMeasureMenuItems(tracks: tracks)
             Divider()
             Button {
                 showAlbumInfo = true

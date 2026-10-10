@@ -133,6 +133,7 @@ struct MacAlbumPage: View {
 
                 Menu {
                     QueueMenuItems(tracks: tracks).environmentObject(viewModel)
+                    DRMeasureMenuItems(tracks: tracks)
                     Divider()
                     Button { showCoverPicker = true } label: { Label("Cambia copertina…", systemImage: "photo") }
                     Button { showAlbumInfo = true } label: { Label("Informazioni sull'album", systemImage: "info.circle") }
