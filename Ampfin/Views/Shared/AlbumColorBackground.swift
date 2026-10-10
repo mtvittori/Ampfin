@@ -5,7 +5,8 @@
 // bitmap (MeshBitmap) that the GPU stretches; it drifts slowly with a Core Animation
 // (no app code per frame) and stands still while scrolling, with Reduce Motion, in the
 // background and under the full player. The page color is mixed in by the bitmap's opacity,
-// so text stays readable.
+// so text stays readable. This is the default renderer; the old MeshGradient one is kept in
+// AlbumColorBackgroundLegacy.swift and picked with AlbumBackdropRenderer.
 
 import SwiftUI
 
@@ -79,6 +80,16 @@ enum MeshBitmap {
             return (nodes, weights)
         }
     }
+}
+
+/// How the background is drawn (Settings > Aspetto > Resa dello sfondo).
+enum AlbumBackdropRenderer: String, CaseIterable {
+    /// One small bitmap per album, drifting by Core Animation. Cheap; the default.
+    case bitmap
+    /// The old MeshGradient redrawn 10 times a second. Heavier, kept as an option.
+    case mesh
+
+    static let storageKey = "albumColorBackgroundRenderer"
 }
 
 @MainActor
@@ -309,6 +320,7 @@ final class DriftView: UIView {
 
 private struct AlbumColorBackgroundModifier: ViewModifier {
     @AppStorage(AlbumBackdrop.storageKey) private var enabled = false
+    @AppStorage(AlbumBackdropRenderer.storageKey) private var renderer = AlbumBackdropRenderer.bitmap.rawValue
     #if os(iOS)
     @State private var motion = BackdropMotion()
     #endif
@@ -320,7 +332,13 @@ private struct AlbumColorBackgroundModifier: ViewModifier {
             // Lists draw their own page color: hide it so the layer behind shows.
             content
                 .scrollContentBackground(.hidden)
-                .background { AlbumColorBackground(motion: motion) }
+                .background {
+                    if renderer == AlbumBackdropRenderer.mesh.rawValue {
+                        LegacyAlbumColorBackground()
+                    } else {
+                        AlbumColorBackground(motion: motion)
+                    }
+                }
                 // The picture stands still while the list scrolls (it costs the scroll frames).
                 .onScrollPhaseChange { _, phase in motion.scrolling = phase != .idle }
                 // The rows read this to drop their own opaque background (albumBackdropRow()).

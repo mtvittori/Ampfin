@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var disabledLibraries: Set<String> = []
     @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
     @AppStorage(AlbumBackdrop.storageKey) private var albumColorBackground = false
+    @AppStorage(AlbumBackdropRenderer.storageKey) private var albumBackdropRenderer = AlbumBackdropRenderer.bitmap.rawValue
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
     @AppStorage(MixSource.topPicksKey) private var mixesInTopPicks = true
     @AppStorage(ScrobbleStatsStore.homeKey) private var showScrobbleStats = false
@@ -304,10 +305,18 @@ struct SettingsView: View {
     @ViewBuilder private var albumBackgroundSection: some View {
         Section {
             Toggle("Sfondo dai colori dell'album", isOn: $albumColorBackground)
+            if albumColorBackground {
+                Picker("Resa dello sfondo", selection: $albumBackdropRenderer) {
+                    Text("Leggera").tag(AlbumBackdropRenderer.bitmap.rawValue)
+                    Text("Mesh animata (vecchia, più pesante)").tag(AlbumBackdropRenderer.mesh.rawValue)
+                }
+            }
         } header: {
             Text("Sfondo")
         } footer: {
-            Text("Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto.")
+            Text(albumColorBackground
+                 ? "Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto. La mesh animata consuma più batteria e prestazioni."
+                 : "Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto.")
         }
     }
 
