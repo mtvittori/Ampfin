@@ -205,6 +205,8 @@ final class DownloadManager: NSObject {
                 if file != nil {
                     self.downloadedIds.insert(item.Id)
                     self.setStatus(.downloaded, for: item.Id)
+                    // DR is measured in the background if the song has none.
+                    Task { @MainActor in DRAnalyzer.shared.songDownloaded(itemId: item.Id) }
                 } else {
                     self.setStatus(.notDownloaded, for: item.Id)
                 }

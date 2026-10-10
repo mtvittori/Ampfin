@@ -61,6 +61,9 @@ struct MacFullPlayer: View {
                 Text(item.Name).font(.title2.weight(.bold)).lineLimit(2).multilineTextAlignment(.center)
                 Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
                     .font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                // Codec and DR, only when "DR nel player" is on and the song is measured.
+                DRPlayerLabel(itemId: item.Id, prefix: player.currentCodec)
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             ClockReader(clock: viewModel.clock) { time in

@@ -40,6 +40,11 @@ final class AudioStreamCache {
         return file
     }
 
+    /// Whether the song is here, without marking it as used (for counting many).
+    func containsFile(forKey key: String) -> Bool {
+        FileManager.default.fileExists(atPath: directory.appendingPathComponent(key).path)
+    }
+
     /// Delivers the file on the main queue (nil on failure). A song already being
     /// downloaded is not downloaded twice; asking with `urgent` raises its priority.
     func fetch(_ url: URL, key: String, urgent: Bool, completion: @escaping (URL?) -> Void) {

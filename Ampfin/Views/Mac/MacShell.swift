@@ -9,7 +9,7 @@ import SwiftUI
 
 /// What the sidebar can show.
 enum MacSection: String, Identifiable {
-    case search, home, recent, artists, albums, tracks, genres, favorites, playlists
+    case search, home, recent, artists, albums, tracks, genres, favorites, dynamicRange, playlists
 
     var id: String { rawValue }
 
@@ -23,6 +23,7 @@ enum MacSection: String, Identifiable {
         case .tracks: return "Brani"
         case .genres: return "Generi"
         case .favorites: return "Preferiti"
+        case .dynamicRange: return "Classifica DR"
         case .playlists: return "Playlist"
         }
     }
@@ -37,6 +38,7 @@ enum MacSection: String, Identifiable {
         case .tracks: return "music.note"
         case .genres: return "guitars"
         case .favorites: return "heart"
+        case .dynamicRange: return "waveform.badge.magnifyingglass"
         case .playlists: return "music.note.list"
         }
     }
@@ -49,7 +51,7 @@ struct MacShell: View {
     @State private var path = NavigationPath()
     @State private var playerState = MacPlayerState()
 
-    private let library: [MacSection] = [.recent, .artists, .albums, .tracks, .genres, .favorites]
+    private let library: [MacSection] = [.recent, .artists, .albums, .tracks, .genres, .favorites, .dynamicRange]
 
     var body: some View {
         NavigationSplitView {
@@ -188,6 +190,7 @@ struct MacShell: View {
         case .tracks: MacTracksView()
         case .genres: MacGenresView()
         case .favorites: MacFavoritesView()
+        case .dynamicRange: DRRankingView()
         case .playlists: MacPlaylistsView()
         }
     }

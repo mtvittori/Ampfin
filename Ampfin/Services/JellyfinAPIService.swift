@@ -699,6 +699,70 @@ class JellyfinAPIService {
         }
     }
 
+    // MARK: - Dynamic range sync
+
+    /// The DR results live in the CustomPrefs of a second Display Preferences entry, so a
+    /// big payload never slows down the settings backup.
+    private var drPreferencesURL: URL? {
+        URL(string: "\(serverUrl)/DisplayPreferences/amplifin-dr?userId=\(userId)&client=amplifin")
+    }
+
+    private func loadDRPreferences() async throws -> [String: Any] {
+        guard let url = drPreferencesURL else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        let (data, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.decodingError(CocoaError(.coderReadCorrupt))
+        }
+        return json
+    }
+
+    /// The encoded chunks (`dr0`…) and the upload date, nil when nothing was uploaded yet.
+    func loadDRChunks() async throws -> (chunks: [String], date: Date)? {
+        let prefs = try await loadDRPreferences()
+        guard let custom = prefs["CustomPrefs"] as? [String: Any],
+              let count = (custom["drCount"] as? String).flatMap({ Int($0) }), count > 0 else { return nil }
+        let chunks = (0..<count).compactMap { custom["dr\($0)"] as? String }
+        let date = (custom["drDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+        return (chunks, date)
+    }
+
+    func saveDRChunks(_ chunks: [String], date: Date) async throws {
+        guard let url = drPreferencesURL else { throw APIError.invalidURL }
+        var prefs = try await loadDRPreferences()
+        var custom = prefs["CustomPrefs"] as? [String: Any] ?? [:]
+        // Chunks of an older, longer upload would linger otherwise.
+        for key in custom.keys where key.hasPrefix("dr") && key.dropFirst(2).allSatisfy(\.isNumber) && !key.dropFirst(2).isEmpty {
+            custom[key] = nil
+        }
+        for (index, chunk) in chunks.enumerated() { custom["dr\(index)"] = chunk }
+        custom["drCount"] = String(chunks.count)
+        custom["drDate"] = ISO8601DateFormatter().string(from: date)
+        prefs["CustomPrefs"] = custom
+        prefs["Client"] = "amplifin"
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuthHeader(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: prefs)
+        let (_, response) = try await JellyfinAPIService.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse((response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+
+    /// The original file of a song, for the DR analysis to download (same auth as the rest).
+    func originalFileRequest(for itemId: String) -> URLRequest? {
+        guard let url = streamURL(for: itemId) else { return nil }
+        var request = URLRequest(url: url)
+        addAuthHeader(to: &request)
+        return request
+    }
+
     private func addAuthHeader(to request: inout URLRequest) {
         let authHeader = "MediaBrowser Client=\"amplifin\", Device=\"\(JellyfinAPIService.deviceName)\", DeviceId=\"\(JellyfinAPIService.deviceId)\", Version=\"1.0.0\", Token=\"\(token)\""
         request.setValue(authHeader, forHTTPHeaderField: "Authorization")

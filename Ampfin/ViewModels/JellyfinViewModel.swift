@@ -946,6 +946,7 @@ class JellyfinViewModel: ObservableObject {
         let api = apiService!
         // Settings backup on the server: restore on a fresh install, then keep it current.
         Task { await SettingsBackup.shared.connect(api: api) }
+        Task { await DRStore.shared.connect(api: api) }
         let downloads = DownloadManager.shared
         self.playerManager = AudioPlayerManager(
             streamURLProvider: { [weak self] item in

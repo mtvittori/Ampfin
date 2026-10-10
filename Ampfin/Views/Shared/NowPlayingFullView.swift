@@ -645,9 +645,12 @@ struct NowPlayingFullView: View {
             HStack(spacing: 8) {
                 Image(systemName: "info.circle")
                     .font(.caption)
-                Text(audioInfoSummary(pm: pm))
-                    .font(.caption)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(audioInfoSummary(pm: pm))
+                        .lineLimit(1)
+                    DRPlayerLabel(itemId: viewModel.currentlyPlayingItem?.Id, dotted: true)
+                }
+                .font(.caption)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.up")
                     .font(.caption2)
