@@ -1,8 +1,8 @@
 // AlbumColorBackgroundLegacy.swift
-// The first album-color background, kept as an option (Settings > Aspetto > Resa dello sfondo):
-// a MeshGradient redrawn 10 times a second behind each screen. It costs more battery and frames
-// than the bitmap renderer in AlbumColorBackground.swift, which stays the default. Kept to
-// compare and to rework later; it reads the same AlbumBackdrop palette.
+// The first album-color background, kept as an option (Settings > Aspetto > Resa dello sfondo,
+// slider at its end): a MeshGradient redrawn 10 times a second behind each screen. It costs more
+// battery and frames than the bitmap renderer in AlbumColorBackground.swift, which paints the same
+// motion (`points(at:)`) into a bitmap. It reads the same AlbumBackdrop palette.
 
 import SwiftUI
 
@@ -47,7 +47,7 @@ struct LegacyAlbumColorBackground: View {
 
 /// A slow drift of the inner points. Redraws ~10 times a second, and not at all with Reduce
 /// Motion or while the app is in the background; no state is written per frame.
-private struct LegacyAlbumMesh: View {
+struct LegacyAlbumMesh: View {
     let colors: [Color]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -65,7 +65,7 @@ private struct LegacyAlbumMesh: View {
     }
 
     /// Corners stay put, edge points slide along their edge, the center wanders.
-    private static func points(at t: TimeInterval) -> [SIMD2<Float>] {
+    nonisolated static func points(at t: TimeInterval) -> [SIMD2<Float>] {
         func w(_ speed: Double, _ phase: Double, _ amount: Double) -> Float {
             Float(amount * sin(t * speed + phase))
         }

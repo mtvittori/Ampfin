@@ -15,7 +15,7 @@ struct SettingsView: View {
     @State private var disabledLibraries: Set<String> = []
     @AppStorage(TopBarStyle.storageKey) private var topBarStyle = TopBarStyle.system.rawValue
     @AppStorage(AlbumBackdrop.storageKey) private var albumColorBackground = false
-    @AppStorage(AlbumBackdropRenderer.storageKey) private var albumBackdropRenderer = AlbumBackdropRenderer.bitmap.rawValue
+    @AppStorage(AlbumBackdropQuality.storageKey) private var albumBackdropQuality = AlbumBackdropQuality.initial
     @AppStorage(MixSource.storageKey) private var mixSource = MixSource.ampfin.rawValue
     @AppStorage(MixSource.topPicksKey) private var mixesInTopPicks = true
     @AppStorage(ScrobbleStatsStore.homeKey) private var showScrobbleStats = false
@@ -306,16 +306,26 @@ struct SettingsView: View {
         Section {
             Toggle("Sfondo dai colori dell'album", isOn: $albumColorBackground)
             if albumColorBackground {
-                Picker("Resa dello sfondo", selection: $albumBackdropRenderer) {
-                    Text("Leggera").tag(AlbumBackdropRenderer.bitmap.rawValue)
-                    Text("Mesh animata (vecchia, più pesante)").tag(AlbumBackdropRenderer.mesh.rawValue)
+                #if os(iOS)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Resa dello sfondo")
+                    Slider(value: $albumBackdropQuality, in: 0...1, step: 0.1) {
+                        Text("Resa dello sfondo")
+                    } minimumValueLabel: {
+                        Text("Leggera").font(.caption)
+                    } maximumValueLabel: {
+                        Text("Originale").font(.caption)
+                    }
+                    AlbumBackdropPreview(quality: albumBackdropQuality)
+                    AlbumBackdropReadout(quality: albumBackdropQuality)
                 }
+                #endif
             }
         } header: {
             Text("Sfondo")
         } footer: {
             Text(albumColorBackground
-                 ? "Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto. La mesh animata consuma più batteria e prestazioni."
+                 ? "Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto. Più si sale verso «Originale», più la mesh si muove come nella versione originale, e più costa in batteria e fluidità."
                  : "Lo sfondo delle schermate si tinge, sfumato, dei colori della copertina in ascolto.")
         }
     }
