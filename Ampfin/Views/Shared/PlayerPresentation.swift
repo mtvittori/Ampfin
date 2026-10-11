@@ -11,6 +11,10 @@ final class PlayerPresentation {
     static let shared = PlayerPresentation()
 
     var isExpanded = false
+    /// The close drag. Owned here, not by the view: a close leaves its offset in place for
+    /// the slide-out, and if the user reopens before the removal ends, SwiftUI re-inserts the
+    /// same view with that offset still set.
+    let drag = PlayerDrag()
     /// True while the full player covers the screen, and a moment after it starts closing.
     /// The animated backgrounds underneath stop drawing meanwhile, so they don't compete
     /// with the slide for the GPU.
@@ -19,11 +23,30 @@ final class PlayerPresentation {
 
     private init() {}
 
+    /// Opens the full player. The drag offset is cleared first, without animation, so the
+    /// player comes up in place even when a close is still removing the old view.
+    @MainActor
+    func open() {
+        resetDragOffset()
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+            isExpanded = true
+        }
+    }
+
+    @MainActor
+    private func resetDragOffset() {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { drag.offset = 0 }
+    }
+
     /// Follows `isExpanded`; called by the layer when it changes.
     @MainActor
     func expandedChanged(_ expanded: Bool) {
         uncoverTask?.cancel()
         if expanded {
+            // Second reset, for opens that don't go through open().
+            resetDragOffset()
             isCovering = true
         } else {
             // Resume only once the slide is over.

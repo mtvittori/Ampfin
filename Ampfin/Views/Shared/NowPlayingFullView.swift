@@ -65,9 +65,10 @@ struct NowPlayingFullView: View {
     }
     @State private var sliderValue: Double = 0
     @State private var isEditingSlider: Bool = false
-    /// The close drag. A reference type on purpose: as @State, every touch frame re-ran the
-    /// whole body (cover, glass buttons, panels); now only `PlayerDragOffset` redraws.
-    @State private var drag = PlayerDrag()
+    /// The close drag, owned by `PlayerPresentation` so that it survives this view being
+    /// removed and re-inserted. A reference type on purpose: as @State, every touch frame
+    /// re-ran the whole body (cover, glass buttons, panels); now only `PlayerDragOffset` redraws.
+    private let drag = PlayerPresentation.shared.drag
     /// True while the close drag is in progress. When SwiftUI cancels the gesture, `onEnded`
     /// never runs, so this reset is the only signal to spring the offset back.
     @GestureState private var isDraggingToClose = false

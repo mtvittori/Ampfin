@@ -92,7 +92,7 @@ struct ContentView: View {
         switch url.host() {
         case "player":
             guard viewModel.currentlyPlayingItem != nil else { return }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) { presentation.isExpanded = true }
+            presentation.open()
         case "album":
             let id = url.lastPathComponent
             linkedAlbum = viewModel.albums.first { $0.Id == id }
@@ -239,9 +239,7 @@ struct ContentView: View {
             // which shrinks next to them while scrolling down, as in Apple Music.
             .tabBarMinimizeBehavior(.onScrollDown)
             .nowPlayingAccessory(isEnabled: viewModel.currentlyPlayingItem != nil) {
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
-                    presentation.isExpanded = true
-                }
+                presentation.open()
             }
             .environment(\.miniPlayerVisible, $miniPlayerVisible)
 
