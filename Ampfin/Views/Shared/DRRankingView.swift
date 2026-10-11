@@ -1,7 +1,8 @@
 // DRRankingView.swift
 // "Classifica DR": the songs (or the albums) with a measured dynamic range, from the most
 // dynamic down, with the analysis controls on top. The lists are built once per change
-// (not in `body`), since a library can have thousands of measured songs.
+// (not in `body`, not on the main thread: `DRRankingStore`), since a library can have
+// thousands of measured songs.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -89,67 +90,6 @@ struct DRPlayerLine: View {
     }
 }
 
-// MARK: - Rows
-
-private struct DRSongRow: Identifiable {
-    let item: AudioItem
-    let artist: String
-    /// nil while the song has no measurement (only shown in search results).
-    let dr: Int?
-    /// Lowercased "artist album title", built once so sorting doesn't compare localized strings.
-    let sortKey: String
-    /// Position in the ranking; nil in search results.
-    var rank: Int?
-    var id: String { item.Id }
-}
-
-private struct DRAlbumRow: Identifiable {
-    let album: AlbumItem
-    let tracks: [AudioItem]
-    let dr: Int?
-    let measured: Int
-    let sortKey: String
-    var rank: Int?
-    /// "n/m misurati", when it is worth saying.
-    let note: String?
-    var id: String { album.Id }
-}
-
-private enum DRRankingMode: String, CaseIterable, Identifiable {
-    case songs = "Brani", albums = "Album"
-    var id: String { rawValue }
-}
-
-/// What the search looks into, folded (case and accents) once per library change so a keystroke
-/// only runs `contains` over 8,000 short strings.
-private final class DRSearchIndex {
-    /// Parallel to `viewModel.audioItems` and `viewModel.albums`.
-    private(set) var songKeys: [String] = []
-    private(set) var albumKeys: [String] = []
-
-    func prepare(items: [AudioItem], albums: [AlbumItem], artist: (AudioItem) -> String) {
-        if songKeys.count != items.count {
-            songKeys = items.map { Self.fold("\(artist($0)) \($0.Album ?? "") \($0.Name)") }
-        }
-        if albumKeys.count != albums.count {
-            albumKeys = albums.map { Self.fold("\($0.AlbumArtist ?? "") \($0.Name)") }
-        }
-    }
-
-    static func fold(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-    }
-
-    /// The words of the query; a key matches when it holds all of them.
-    static func terms(_ query: String) -> [String] {
-        fold(query).split(whereSeparator: \.isWhitespace).map(String.init)
-    }
-
-    static func matches(_ key: String, _ terms: [String]) -> Bool {
-        terms.allSatisfy { key.contains($0) }
-    }
-}
-
 // MARK: - Page
 
 struct DRRankingView: View {
@@ -159,14 +99,10 @@ struct DRRankingView: View {
     @State private var mode: DRRankingMode = .songs
     /// The iPhone's search field; on the Mac the toolbar search (`globalSearchQuery`) filters.
     @State private var searchText = ""
-    @State private var songs: [DRSongRow] = []
-    @State private var albums: [DRAlbumRow] = []
-    @State private var queue: [AudioItem] = []
-    @State private var measured = 0
-    /// Mean DR of the measured songs, computed with `measured` in `rebuild()`.
-    @State private var meanDR: Int?
+    /// The rows live in a shared store that builds them off the main thread and keeps them
+    /// between visits, so the page opens with the last list and refreshes behind it.
+    @ObservedObject private var ranking = DRRankingStore.shared
     @State private var didLoad = false
-    @State private var searchIndex = DRSearchIndex()
 
     /// "Confronta album" page, and the DR file import with its outcome message.
     @State private var showCompare = false
@@ -201,7 +137,16 @@ struct DRRankingView: View {
         "\(mode.rawValue)|\(query)|\(store.results.count)|\(viewModel.audioItems.count)|\(viewModel.albums.count)"
     }
 
+    private var songs: [DRSongRow] { ranking.songs }
+    private var albums: [DRAlbumRow] { ranking.albums }
+    private var queue: [AudioItem] { ranking.queue }
+    private var meanDR: Int? { ranking.meanDR }
+    /// Until the first build the header shows the stored results, not a zero.
+    private var measured: Int { ranking.hasBuilt(mode) ? ranking.measured : store.results.count }
+
     private var isEmpty: Bool { mode == .songs ? songs.isEmpty : albums.isEmpty }
+    /// An empty list that is still being built is a spinner, not "nothing measured".
+    private var isLoading: Bool { isEmpty && (ranking.isBuilding || !ranking.hasBuilt(mode)) }
 
     var body: some View {
         content
@@ -213,9 +158,12 @@ struct DRRankingView: View {
                     try? await Task.sleep(for: .milliseconds(300))
                     guard !Task.isCancelled else { return }
                 }
-                rebuild()
+                ranking.refresh(mode: mode, query: query, results: store.results, items: viewModel.audioItems,
+                                albums: viewModel.albums, artists: viewModel.artistNameLookup,
+                                libraryRevision: viewModel.libraryRevision)
                 didLoad = true
             }
+            .onChange(of: ranking.builds) { updateSelection() }
             .onChange(of: selection) { updateSelection() }
             .onChange(of: mode) { selection = [] }
             .navigationDestination(isPresented: $showCompare) { compareDestination }
@@ -235,89 +183,6 @@ struct DRRankingView: View {
             #if os(iOS)
             .searchable(text: $searchText, prompt: "Brani, album o artisti")
             #endif
-    }
-
-    // MARK: Build
-
-    private func rebuild() {
-        let results = store.results
-        let items = viewModel.audioItems
-        let q = query
-        var count = 0
-        var sum = 0.0
-        for item in items {
-            if let result = results[item.Id] { count += 1; sum += result.value }
-        }
-        measured = count
-        meanDR = count == 0 ? nil : Int((sum / Double(count)).rounded())
-        let terms = DRSearchIndex.terms(q)
-        if !terms.isEmpty {
-            searchIndex.prepare(items: items, albums: viewModel.albums) { viewModel.artistName(for: $0) ?? "" }
-        }
-
-        switch mode {
-        case .songs:
-            var rows: [DRSongRow] = []
-            if terms.isEmpty {
-                // The ranking: measured songs only.
-                for item in items {
-                    if let result = results[item.Id] { rows.append(songRow(item, dr: result.dr)) }
-                }
-            } else {
-                // Search: the whole library, measured or not.
-                for (index, item) in items.enumerated() where DRSearchIndex.matches(searchIndex.songKeys[index], terms) {
-                    rows.append(songRow(item, dr: results[item.Id]?.dr))
-                }
-            }
-            rows.sort { Self.precedes($0.dr, $0.sortKey, $1.dr, $1.sortKey) }
-            if terms.isEmpty {
-                for index in rows.indices { rows[index].rank = index + 1 }
-            }
-            songs = rows
-            queue = rows.map(\.item)
-        case .albums:
-            let byAlbum = Dictionary(grouping: items, by: { $0.AlbumId ?? "" })
-            var rows: [DRAlbumRow] = []
-            if terms.isEmpty {
-                for album in viewModel.albums {
-                    guard let tracks = byAlbum[album.Id],
-                          let dr = store.albumDR(trackIds: tracks.map(\.Id)) else { continue }
-                    rows.append(albumRow(album, tracks: tracks, dr: dr, results: results, alwaysNote: false))
-                }
-            } else {
-                for (index, album) in viewModel.albums.enumerated() where DRSearchIndex.matches(searchIndex.albumKeys[index], terms) {
-                    let tracks = byAlbum[album.Id] ?? []
-                    rows.append(albumRow(album, tracks: tracks, dr: store.albumDR(trackIds: tracks.map(\.Id)),
-                                         results: results, alwaysNote: true))
-                }
-            }
-            rows.sort { Self.precedes($0.dr, $0.sortKey, $1.dr, $1.sortKey) }
-            if terms.isEmpty {
-                for index in rows.indices { rows[index].rank = index + 1 }
-            }
-            albums = rows
-        }
-        updateSelection()
-    }
-
-    private func songRow(_ item: AudioItem, dr: Int?) -> DRSongRow {
-        let artist = viewModel.artistName(for: item) ?? ""
-        return DRSongRow(item: item, artist: artist, dr: dr,
-                         sortKey: "\(artist)\u{0}\(item.Album ?? "")\u{0}\(item.Name)".lowercased())
-    }
-
-    private func albumRow(_ album: AlbumItem, tracks: [AudioItem], dr: Int?, results: [String: DRResult],
-                          alwaysNote: Bool) -> DRAlbumRow {
-        let done = tracks.reduce(0) { $0 + (results[$1.Id] == nil ? 0 : 1) }
-        let note = !tracks.isEmpty && (alwaysNote || done < tracks.count) ? "\(done)/\(tracks.count) misurati" : nil
-        return DRAlbumRow(album: album, tracks: tracks, dr: dr, measured: done,
-                          sortKey: "\(album.AlbumArtist ?? "")\u{0}\(album.Name)".lowercased(), rank: nil, note: note)
-    }
-
-    /// Most dynamic first, the unmeasured last, then by name.
-    private static func precedes(_ lhs: Int?, _ lhsKey: String, _ rhs: Int?, _ rhsKey: String) -> Bool {
-        let (a, b) = (lhs ?? -1, rhs ?? -1)
-        return a != b ? a > b : lhsKey < rhsKey
     }
 
     private func updateSelection() {
@@ -462,10 +327,11 @@ struct DRRankingView: View {
                 Image(systemName: systemImage)
                     .font(.title3)
                     .frame(height: 24)
-                // The label stays primary: the accent on dark glass is hard to read. Only the icon is tinted.
+                // The label keeps the plain label color: inside a Button the hierarchical `.primary`
+                // resolves to the tint (the accent, unreadable on dark glass). Only the icon is tinted.
                 Text(short)
                     .font(.footnote)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
@@ -498,7 +364,10 @@ struct DRRankingView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if !query.isEmpty {
+        if isLoading {
+            ProgressView()
+                .padding(.top, 24)
+        } else if !query.isEmpty {
             ContentUnavailableView.search(text: query)
         } else if measured == 0 {
             ContentUnavailableView("Nessun brano misurato", systemImage: "waveform.badge.magnifyingglass",
