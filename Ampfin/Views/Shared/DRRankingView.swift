@@ -49,6 +49,9 @@ extension DRBadgeStyle {
 struct DRPlayerLine: View {
     /// Shorter text ("Album 11") and no reserved height, for the Mac bar.
     var compact = false
+    /// Fixed values for the settings preview: shown even when the switch is off, and nothing
+    /// is read from the playing song.
+    var sample: (song: Int, album: Int)?
 
     @AppStorage(DRSettings.playerBadgeKey) private var enabled = true
     @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
@@ -57,7 +60,7 @@ struct DRPlayerLine: View {
     static let height: CGFloat = 15
 
     var body: some View {
-        if enabled {
+        if enabled || sample != nil {
             line
                 .font(.system(size: compact ? 11 : 12, weight: .semibold))
                 .monospacedDigit()
@@ -68,8 +71,10 @@ struct DRPlayerLine: View {
     }
 
     private var line: Text {
-        let song = now.songDR.map { part("DR \($0)", dr: $0) }
-        let album = now.albumDR.map { part(compact ? "Album \($0)" : "Album DR \($0)", dr: $0) }
+        let songDR = sample?.song ?? now.songDR
+        let albumDR = sample?.album ?? now.albumDR
+        let song = songDR.map { part("DR \($0)", dr: $0) }
+        let album = albumDR.map { part(compact ? "Album \($0)" : "Album DR \($0)", dr: $0) }
         switch (song, album) {
         case let (song?, album?): return Text("\(song) · \(album)")
         case let (song?, nil): return song
@@ -158,6 +163,8 @@ struct DRRankingView: View {
     @State private var albums: [DRAlbumRow] = []
     @State private var queue: [AudioItem] = []
     @State private var measured = 0
+    /// Mean DR of the measured songs, computed with `measured` in `rebuild()`.
+    @State private var meanDR: Int?
     @State private var didLoad = false
     @State private var searchIndex = DRSearchIndex()
 
@@ -236,7 +243,13 @@ struct DRRankingView: View {
         let results = store.results
         let items = viewModel.audioItems
         let q = query
-        measured = items.reduce(0) { $0 + (results[$1.Id] == nil ? 0 : 1) }
+        var count = 0
+        var sum = 0.0
+        for item in items {
+            if let result = results[item.Id] { count += 1; sum += result.value }
+        }
+        measured = count
+        meanDR = count == 0 ? nil : Int((sum / Double(count)).rounded())
         let terms = DRSearchIndex.terms(q)
         if !terms.isEmpty {
             searchIndex.prepare(items: items, albums: viewModel.albums) { viewModel.artistName(for: $0) ?? "" }
@@ -384,41 +397,90 @@ struct DRRankingView: View {
     // MARK: Layout
 
     #if os(iOS)
-    /// The page's actions as buttons: compare, import, export, and the player switch. (The Mac
-    /// lays the same buttons out in its header.)
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                controlButtons
-            }
-            Toggle("DR nel player", isOn: $playerBadge)
-            badgeStylePicker
+    /// The page's tools in one row of equal glass buttons (icon over a short label).
+    private var toolRow: some View {
+        HStack(spacing: 10) {
+            controlButtons
         }
+    }
+
+    /// "Nel player": the switch, the style and a preview of the label as the player shows it.
+    private var playerCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $playerBadge) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Mostra DR")
+                    Text("Nel player")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Picker("Colore", selection: $badgeStyle) {
+                ForEach(DRBadgeStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            HStack {
+                Text("Anteprima")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                // Gray backdrop so the white and black styles are both readable.
+                DRPlayerLine(sample: (song: 14, album: 11))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.gray.opacity(0.45), in: Capsule())
+            }
+        }
+        .drCard()
+        .opacity(playerBadge ? 1 : 0.55)
+        .animation(.easeOut(duration: 0.15), value: playerBadge)
     }
     #endif
 
     @ViewBuilder
     private var controlButtons: some View {
-        controlButton("Confronta album", systemImage: "chart.bar.xaxis") { showCompare = true }
-        controlButton("Importa DR", systemImage: "square.and.arrow.down") { showImporter = true }
-        controlButton("Esporta DR", systemImage: "square.and.arrow.up") { exportDR() }
+        controlButton("Confronta album", short: "Confronta", systemImage: "chart.bar.xaxis") { showCompare = true }
+        controlButton("Importa DR", short: "Importa", systemImage: "square.and.arrow.down") { showImporter = true }
+        controlButton("Esporta DR", short: "Esporta", systemImage: "square.and.arrow.up") { exportDR() }
     }
 
+    #if os(macOS)
     private var badgeStylePicker: some View {
         Picker("Colore", selection: $badgeStyle) {
             ForEach(DRBadgeStyle.allCases) { Text($0.title).tag($0) }
         }
         .disabled(!playerBadge)
     }
+    #endif
 
-    private func controlButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func controlButton(_ title: String, short: String, systemImage: String,
+                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
+            #if os(iOS)
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .frame(height: 24)
+                // The label stays primary: the accent on dark glass is hard to read. Only the icon is tinted.
+                Text(short)
+                    .font(.footnote)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            #else
             Label(title, systemImage: systemImage)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
+            #endif
         }
         .buttonStyle(.glass)
+        .buttonBorderShape(.roundedRectangle(radius: 16))
+        .accessibilityLabel(title)
     }
 
     private var modePicker: some View {
@@ -430,7 +492,8 @@ struct DRRankingView: View {
     }
 
     private var header: some View {
-        DRAnalysisHeader(items: viewModel.audioItems, measured: measured, library: viewModel.audioItems.count)
+        DRAnalysisHeader(items: viewModel.audioItems, measured: measured, library: viewModel.audioItems.count,
+                         meanDR: meanDR)
     }
 
     @ViewBuilder
@@ -439,7 +502,7 @@ struct DRRankingView: View {
             ContentUnavailableView.search(text: query)
         } else if measured == 0 {
             ContentUnavailableView("Nessun brano misurato", systemImage: "waveform.badge.magnifyingglass",
-                description: Text("Tocca \"Analizza libreria\", oppure cerca un brano o un album e misuralo a mano. La classifica si riempie man mano che i brani vengono misurati."))
+                description: Text("Tocca \"Analizza\", oppure cerca un brano o un album e misuralo a mano. La classifica si riempie man mano che i brani vengono misurati."))
         } else {
             ContentUnavailableView("Nessun album", systemImage: "square.stack",
                 description: Text("Nessun album ha ancora un brano misurato."))
@@ -449,10 +512,15 @@ struct DRRankingView: View {
     #if os(iOS)
     private var content: some View {
         List(selection: $selection) {
+            // One row for the whole header, so the spacing is ours (16 between blocks).
             Section {
-                header
-                controls
-                modePicker
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    toolRow
+                    playerCard
+                    modePicker
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
             }
             .listRowSeparator(.hidden)
             .selectionDisabled()
@@ -541,6 +609,7 @@ struct DRRankingView: View {
                               subtitle: measured == 0 ? nil : "\(measured.formatted()) brani misurati")
                     .padding(.bottom, 16)
                 header
+                    .frame(maxWidth: 560, alignment: .leading)
                 HStack(alignment: .center, spacing: 10) {
                     controlButtons
                     Spacer(minLength: 8)
@@ -761,17 +830,32 @@ private struct DRRowStatus: View {
 
 // MARK: - Analysis header
 
-/// "Misurati X di Y", the start/stop button, the progress and the footnote. It observes the
-/// analyzer itself, so a progress tick redraws only this block and not the lists.
+extension View {
+    /// The rounded glass block the DR page groups its controls in.
+    fileprivate func drCard() -> some View {
+        padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// The summary card: how much of the library is measured, the mean DR, and the start/stop
+/// button with the run's progress. It observes the analyzer itself, so a progress tick
+/// redraws only this block and not the lists.
 private struct DRAnalysisHeader: View {
     let items: [AudioItem]
     let measured: Int
     let library: Int
+    let meanDR: Int?
+
+    /// Thousands with a dot ("9.339"), whatever the device language.
+    private static let italian = Locale(identifier: "it_IT")
 
     @ObservedObject private var analyzer = DRAnalyzer.shared
     @ObservedObject private var store = DRStore.shared
     @State private var pending = 0
     @State private var hasCounted = false
+    @State private var showInfo = false
 
     /// Changes when something that decides how many songs are left to measure changes.
     private var pendingKey: String {
@@ -779,54 +863,53 @@ private struct DRAnalysisHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Misurati \(measured) di \(library)")
-                        .font(.headline)
-                    if !analyzer.isRunning, pending > 0 {
-                        Text("Da misurare: \(pending)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(measured.formatted(.number.locale(Self.italian)))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text("di \(library.formatted(.number.locale(Self.italian))) misurati")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
+                if let meanDR {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("DR medio")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DRBadge(dr: meanDR)
+                    }
+                }
+            }
+
+            ProgressView(value: Double(measured), total: Double(max(library, 1)))
+
+            HStack(spacing: 8) {
+                infoButton
+                status
+                Spacer(minLength: 0)
                 if analyzer.isRunning {
                     Button("Ferma") { analyzer.stop() }
                         .buttonStyle(.glass)
                 } else {
-                    Button("Analizza libreria") { analyzer.start(items: items) }
+                    Button("Analizza") { analyzer.start(items: items) }
                         .buttonStyle(.glassProminent)
                         .disabled(pending == 0)
                 }
             }
-
-            if analyzer.isRunning {
-                ProgressView(value: Double(analyzer.done), total: Double(max(analyzer.total, 1)))
-                HStack(spacing: 6) {
-                    Text("\(analyzer.done) di \(analyzer.total)")
-                        .monospacedDigit()
-                    if let title = analyzer.currentTitle {
-                        Text("· \(title)").lineLimit(1)
-                    }
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
+            .controlSize(.small)
 
             if let error = analyzer.lastError {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-
-            Text(analyzer.analyzesWholeLibrary
-                 ? "Il Mac scarica e misura tutti i brani della libreria, oppure solo quelli scelti: selezionali e tocca Analizza. I risultati si salvano su Jellyfin e arrivano anche sugli altri dispositivi."
-                 : "\"Analizza libreria\" sull'iPhone misura solo i brani scaricati o già in cache. I brani scelti a mano (Seleziona, o tieni premuto su un brano) vengono scaricati in modo temporaneo per misurarli. Il Mac misura tutta la libreria e i risultati arrivano qui tramite Jellyfin.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .drCard()
         // The count walks the whole library (on iOS with a file check per song), so it runs off
         // the main thread, and a burst of changes (a run adds a song every few seconds) counts
         // once. The task ends with the page: nothing is counted while it isn't visible.
@@ -839,6 +922,60 @@ private struct DRAnalysisHeader: View {
             guard !Task.isCancelled else { return }
             pending = count
             hasCounted = true
+        }
+    }
+
+    /// What the button would do, or the progress of the run: "12/340 · Title" on one line.
+    @ViewBuilder
+    private var status: some View {
+        if analyzer.isRunning {
+            Text("\(analyzer.done)/\(analyzer.total)" + (analyzer.currentTitle.map { " · \($0)" } ?? ""))
+                .monospacedDigit()
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else if hasCounted {
+            Text(statusText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// On the iPhone the count is only the songs it can read (downloaded or cached), which is
+    /// not the whole unmeasured part of the library, so the text says so.
+    private var statusText: String {
+        if analyzer.analyzesWholeLibrary {
+            return pending > 0 ? "\(pending.formatted()) da misurare" : "Tutto misurato"
+        }
+        if pending > 0 {
+            return pending == 1 ? "1 brano scaricato da misurare" : "\(pending.formatted()) brani scaricati da misurare"
+        }
+        return measured < library ? "Nessun brano scaricato da misurare" : "Tutto misurato"
+    }
+
+    private var infoButton: some View {
+        Button {
+            showInfo = true
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Come funziona l'analisi")
+        .popover(isPresented: $showInfo) {
+            Text(analyzer.analyzesWholeLibrary
+                 ? "Il Mac scarica e misura tutti i brani, oppure solo quelli selezionati. I risultati si salvano su Jellyfin e arrivano sugli altri dispositivi."
+                 : "Sull'iPhone \"Analizza\" misura i brani scaricati o già in cache. Gli altri puoi sceglierli a mano (Seleziona, o tieni premuto su un brano): vengono scaricati solo per la misura. Il Mac misura tutta la libreria e i risultati arrivano qui tramite Jellyfin.")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding()
+                .frame(width: 300)
+                .presentationCompactAdaptation(.popover)
         }
     }
 }
