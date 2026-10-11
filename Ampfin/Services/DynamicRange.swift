@@ -40,8 +40,12 @@ final class DRStore: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var uploadTask: Task<Void, Never>?
 
-    init() {
-        results = Self.loadFromDisk()
+    private let fileURL: URL
+
+    /// `fileURL` is only different in tests, which must not touch the user's results.
+    init(fileURL: URL = DRStore.defaultFileURL) {
+        self.fileURL = fileURL
+        results = Self.loadFromDisk(fileURL)
     }
 
     func result(for itemId: String) -> DRResult? { results[itemId] }
@@ -61,6 +65,16 @@ final class DRStore: ObservableObject {
         scheduleUpload(after: .seconds(10))
     }
 
+    /// Stores many results at once (an import): one change for the UI, then the same save and
+    /// upload as record(), without the debounce.
+    func recordMany(_ new: [String: DRResult]) {
+        guard !new.isEmpty else { return }
+        results.merge(new) { _, imported in imported }
+        needsUpload = true
+        scheduleSave()
+        flushUpload()
+    }
+
     /// Sends what is pending now (end of a run) instead of waiting for the debounce.
     func flushUpload() {
         guard needsUpload else { return }
@@ -69,13 +83,13 @@ final class DRStore: ObservableObject {
 
     // MARK: - Disk
 
-    private static let fileURL: URL = {
+    static let defaultFileURL: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return support.appendingPathComponent("Ampfin", isDirectory: true).appendingPathComponent("dr-results.json")
     }()
 
-    private static func loadFromDisk() -> [String: DRResult] {
+    private static func loadFromDisk(_ fileURL: URL) -> [String: DRResult] {
         guard let data = try? Data(contentsOf: fileURL) else { return [:] }
         return (try? JSONDecoder().decode([String: DRResult].self, from: data)) ?? [:]
     }
@@ -87,9 +101,9 @@ final class DRStore: ObservableObject {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             let snapshot = results
+            let url = fileURL
             await Task.detached(priority: .utility) {
                 guard let data = try? JSONEncoder().encode(snapshot) else { return }
-                let url = Self.fileURL
                 try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? data.write(to: url, options: .atomic)
             }.value

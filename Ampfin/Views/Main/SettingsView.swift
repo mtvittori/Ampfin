@@ -32,6 +32,10 @@ struct SettingsView: View {
     @State private var showExporter = false
     @State private var showImporter = false
     @State private var confirmRestore = false
+    @State private var showDRImporter = false
+    @State private var showDRExporter = false
+    @State private var drExportFile: DRExportFile?
+    @State private var drImportMessage: String?
     #if os(iOS)
     @State private var currentIcon = UIApplication.shared.alternateIconName
     #endif
@@ -503,10 +507,54 @@ struct SettingsView: View {
             }
             #endif
             Toggle("DR nel player", isOn: $drPlayerBadge)
+
+            Button("Importa DR da file…", systemImage: "square.and.arrow.down") {
+                showDRImporter = true
+            }
+
+            Button("Esporta DR…", systemImage: "square.and.arrow.up") {
+                exportDR()
+            }
+
+            if let drImportMessage {
+                Text(drImportMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("Gamma dinamica")
         } footer: {
-            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore compare accanto al formato audio.")
+            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore compare accanto al formato audio. Puoi importare un file JSON o CSV con id e DR dei brani (anche dagli script sul server).")
+        }
+        .fileImporter(isPresented: $showDRImporter, allowedContentTypes: [.json, .commaSeparatedText, .plainText]) { result in
+            importDR(result)
+        }
+        .fileExporter(isPresented: $showDRExporter, document: drExportFile, contentType: .json,
+                      defaultFilename: DRExportFile.suggestedName) { result in
+            if case .failure(let error) = result { drImportMessage = "Esportazione non riuscita: \(error.localizedDescription)" }
+        }
+    }
+
+    private func importDR(_ result: Result<URL, Error>) {
+        do {
+            let url = try result.get()
+            let r = try DRStore.shared.importFile(at: url, knownIds: Set(viewModel.audioItems.map(\.Id)))
+            drImportMessage = "Importati \(r.imported) brani, \(r.unchanged) già uguali, \(r.skipped) non nella libreria"
+        } catch {
+            drImportMessage = error.localizedDescription
+        }
+    }
+
+    private func exportDR() {
+        guard !DRStore.shared.results.isEmpty else {
+            drImportMessage = "Non c'è ancora nessun DR da esportare."
+            return
+        }
+        do {
+            drExportFile = DRExportFile(data: try DRStore.shared.exportData())
+            showDRExporter = true
+        } catch {
+            drImportMessage = "Esportazione non riuscita: \(error.localizedDescription)"
         }
     }
 

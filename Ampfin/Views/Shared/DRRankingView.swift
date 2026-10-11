@@ -4,17 +4,17 @@
 // (not in `body`), since a library can have thousands of measured songs.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Badge
 
-/// "DR12" in the color of the DR database scale: red up to 7, amber 8 to 13, green from 14.
+/// "DR12" in the color of the DR database scale: red up to 7, amber 8 to 13, green from 14
+/// (the scale is `DRScale`, shared with the album table and its range bars).
 struct DRBadge: View {
     let dr: Int
 
     static func color(for dr: Int) -> Color {
-        if dr <= 7 { return .red }
-        if dr <= 13 { return Color(red: 0.93, green: 0.62, blue: 0.08) }
-        return .green
+        DRScale.color(forDR: Double(dr))
     }
 
     var body: some View {
@@ -130,6 +130,11 @@ struct DRRankingView: View {
     @State private var didLoad = false
     @State private var searchIndex = DRSearchIndex()
 
+    /// "Confronta album" page, and the DR file import with its outcome message.
+    @State private var showCompare = false
+    @State private var showImporter = false
+    @State private var importMessage: String?
+
     /// Song or album ids picked in selection mode (iOS) or in the list (Mac).
     @State private var selection = Set<String>()
     /// The songs behind the selection (an album is all its songs) and how many have no DR.
@@ -171,6 +176,16 @@ struct DRRankingView: View {
             }
             .onChange(of: selection) { updateSelection() }
             .onChange(of: mode) { selection = [] }
+            .navigationDestination(isPresented: $showCompare) { compareDestination }
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.json, .commaSeparatedText, .plainText]) { result in
+                importDR(result)
+            }
+            .alert("Importa DR", isPresented: Binding(get: { importMessage != nil },
+                                                       set: { if !$0 { importMessage = nil } })) {
+                Button("OK") { importMessage = nil }
+            } message: {
+                Text(importMessage ?? "")
+            }
             #if os(iOS)
             .searchable(text: $searchText, prompt: "Brani, album o artisti")
             #endif
@@ -282,6 +297,37 @@ struct DRRankingView: View {
         .disabled(selectedTracks.isEmpty)
     }
 
+    // MARK: Compare and import
+
+    @ViewBuilder
+    private var compareDestination: some View {
+        #if os(macOS)
+        DRAlbumCompareView().macPageChrome()
+        #else
+        DRAlbumCompareView()
+        #endif
+    }
+
+    /// Reads the DR values of a file picked by the user (server script, CSV or Ampfin export).
+    private func importDR(_ result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            importMessage = error.localizedDescription
+        case .success(let url):
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let outcome = try store.importFile(at: url, knownIds: Set(viewModel.audioItems.map(\.Id)))
+                var parts = ["\(outcome.imported) brani importati"]
+                if outcome.unchanged > 0 { parts.append("\(outcome.unchanged) già uguali") }
+                if outcome.skipped > 0 { parts.append("\(outcome.skipped) ignorati (non in libreria o illeggibili)") }
+                importMessage = parts.joined(separator: ", ") + "."
+            } catch {
+                importMessage = error.localizedDescription
+            }
+        }
+    }
+
     // MARK: Layout
 
     private var modePicker: some View {
@@ -341,6 +387,19 @@ struct DRRankingView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if editMode.isEditing { analyzeSelectionButton }
+                if !editMode.isEditing {
+                    Menu {
+                        Button { showCompare = true } label: {
+                            Label("Confronta album", systemImage: "chart.bar.xaxis")
+                        }
+                        Button { showImporter = true } label: {
+                            Label("Importa DR…", systemImage: "square.and.arrow.down")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Altro")
+                }
                 Button(editMode.isEditing ? "Fine" : "Seleziona") {
                     withAnimation {
                         editMode = editMode.isEditing ? .inactive : .active
@@ -403,9 +462,18 @@ struct DRRankingView: View {
                               subtitle: measured == 0 ? nil : "\(measured.formatted()) brani misurati")
                     .padding(.bottom, 16)
                 header
-                modePicker
-                    .frame(maxWidth: 260)
-                    .padding(.vertical, 14)
+                HStack(spacing: 10) {
+                    modePicker
+                        .frame(maxWidth: 260)
+                    Spacer(minLength: 8)
+                    Button { showCompare = true } label: {
+                        Label("Confronta album", systemImage: "chart.bar.xaxis")
+                    }
+                    Button { showImporter = true } label: {
+                        Label("Importa DR…", systemImage: "square.and.arrow.down")
+                    }
+                }
+                .padding(.vertical, 14)
             }
             .padding(.horizontal, 28)
             .padding(.top, 28)
