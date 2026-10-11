@@ -441,6 +441,9 @@ struct NowPlayingFullView: View {
             }
             .font(.footnote.weight(.semibold).monospacedDigit())
             .foregroundStyle(fg.opacity(0.7))
+            // The row moves as one unit with the open slide: the pill's text and width change when
+            // media info and DR arrive late, and those must not animate on their own.
+            .geometryGroup()
         }
     }
 
@@ -1284,6 +1287,10 @@ private struct PlayerInfoPill: View {
             .font(.system(size: 12, weight: .medium))
             .lineLimit(1)
             .foregroundStyle(color.opacity(0.85))
+            // Fixed height for the one-line variant: a late switch to two lines must not shift the rows below.
+            .frame(minHeight: 18)
+            // Content changes (text, width, variant) apply at once; only the parent slide animates the pill.
+            .transaction { $0.animation = nil }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Info audio")
