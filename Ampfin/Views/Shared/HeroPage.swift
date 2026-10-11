@@ -67,6 +67,69 @@ struct HeroPalette: Equatable {
     }
 }
 
+/// Decodes the cover for display and takes its colors. Both force a full decode of the
+/// image, so callers run it off the main thread.
+private func prepareHeroArt(_ image: PlatformImage) -> (PlatformImage, HeroPalette?) {
+    #if os(iOS)
+    let ready = image.preparingForDisplay() ?? image
+    #else
+    let ready = image
+    #endif
+    return (ready, HeroPalette(image: ready))
+}
+
+/// The last covers shown by hero pages with their colors, so reopening a page is instant.
+@MainActor
+private enum HeroArtCache {
+    private static var entries: [[URL]: (image: PlatformImage, palette: HeroPalette)] = [:]
+    private static var order: [[URL]] = []
+
+    static func entry(for urls: [URL]) -> (image: PlatformImage, palette: HeroPalette)? { entries[urls] }
+
+    static func store(image: PlatformImage, palette: HeroPalette, for urls: [URL]) {
+        entries[urls] = (image, palette)
+        order.removeAll { $0 == urls }
+        order.append(urls)
+        if order.count > 12 { entries[order.removeFirst()] = nil }
+    }
+}
+
+#if os(iOS)
+/// Tells whether the page is still in a navigation transition. The hosting controller's
+/// appearance callbacks are the early signal SwiftUI's onAppear/onDisappear aren't: willAppear
+/// and willDisappear fire when a push, a pop or an interactive edge swipe starts, didAppear
+/// when the page has settled (also after a cancelled swipe).
+private struct NavigationSettleReader: UIViewControllerRepresentable {
+    let onChange: (Bool) -> Void
+
+    final class Controller: UIViewController {
+        var onChange: (Bool) -> Void = { _ in }
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            onChange(false)
+        }
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            onChange(true)
+        }
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            onChange(false)
+        }
+    }
+
+    func makeUIViewController(context: Context) -> Controller {
+        let controller = Controller()
+        controller.view.isUserInteractionEnabled = false
+        return controller
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.onChange = onChange
+    }
+}
+#endif
+
 /// The scrolling page: image header, centered titles, controls, content.
 struct HeroPage<Controls: View, Content: View>: View {
     let imageURLs: [URL]
@@ -81,6 +144,10 @@ struct HeroPage<Controls: View, Content: View>: View {
     @AppStorage(HeroCoverSettings.storageKey) private var coverBelowIsland = false
     @State private var image: PlatformImage?
     @State private var palette = HeroPalette.neutral
+    /// False while the page is pushed or popped (taps meant for the back button, the edge swipe
+    /// or the previous page's tiles would land on the rows under the finger).
+    @State private var isSettled = false
+    @State private var settleReported = false
 
     var body: some View {
         GeometryReader { geo in
@@ -102,6 +169,7 @@ struct HeroPage<Controls: View, Content: View>: View {
                     content(palette)
                 }
                 .padding(.bottom, 170)
+                .allowsHitTesting(isSettled)
             }
             .ignoresSafeArea(edges: .top)
             #if os(iOS)
@@ -112,10 +180,35 @@ struct HeroPage<Controls: View, Content: View>: View {
         .environment(\.colorScheme, palette.isLight ? .light : .dark)
         .tint(palette.foreground)
         .animation(.easeInOut(duration: 0.5), value: palette)
+        #if os(iOS)
+        .background(NavigationSettleReader { settleReported = true; isSettled = $0 })
+        .task {
+            // Safety net if the settle signal never comes (the page is not in a navigation stack).
+            try? await Task.sleep(for: .seconds(0.8))
+            if !settleReported { isSettled = true }
+        }
+        #else
+        .onAppear { isSettled = true }
+        #endif
         .task(id: imageURLs) {
+            // Opened before: the cover and its colors are in memory, no flash of the neutral page.
+            if let known = HeroArtCache.entry(for: imageURLs) {
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) {
+                    image = known.image
+                    palette = known.palette
+                }
+                return
+            }
             guard let loaded = await ImageLoader.shared.firstImage(from: imageURLs) else { return }
-            image = loaded
-            if let colors = HeroPalette(image: loaded) { palette = colors }
+            // Decoding the cover and sampling its colors are the heavy part: off the main thread.
+            let (ready, colors) = await Task.detached(priority: .userInitiated) { prepareHeroArt(loaded) }.value
+            image = ready
+            if let colors {
+                palette = colors
+                HeroArtCache.store(image: ready, palette: colors, for: imageURLs)
+            }
         }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

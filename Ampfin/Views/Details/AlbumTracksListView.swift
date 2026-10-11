@@ -8,8 +8,10 @@ struct AlbumTracksListView: View {
     @State private var selectedTrackForInfo: AudioItem?
     @State private var showAlbumInfo = false
     @State private var showCoverPicker = false
-    /// Rows cascade in only while the page opens, not when scrolled back into view.
-    @State private var introRunning = true
+    /// When the page was opened: rows created within the first moments cascade in, later ones
+    /// (scrolled into view) don't. A plain value read when a row is made, never a change the
+    /// page has to redraw for.
+    @State private var openedAt = Date()
 
     var body: some View {
         #if os(macOS)
@@ -40,7 +42,8 @@ struct AlbumTracksListView: View {
 
     /// Apple Music-style page: the cover edge to edge, fading into its own color.
     private var content: some View {
-        let tracks = viewModel.selectedAlbumTracks
+        // From memory at once (the server's answer is refreshed in the background).
+        let tracks = viewModel.albumTracks(for: album.id)
         let artist = viewModel.artist(named: album.AlbumArtist)
 
         return HeroPage(
@@ -65,11 +68,12 @@ struct AlbumTracksListView: View {
                 onFavorite: { viewModel.toggleFavoriteAlbum(album.id) }
             )
         } content: { palette in
-            if viewModel.isLoadingAlbum {
+            if tracks.isEmpty && viewModel.isLoadingAlbum {
                 ProgressView()
                     .padding(.top, 20)
             } else {
                 LazyVStack(spacing: 0) {
+                    let intro = Date().timeIntervalSince(openedAt) < 1
                     ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                         HeroTrackRow(track: track,
                                      number: index + 1,
@@ -77,7 +81,7 @@ struct AlbumTracksListView: View {
                                      queue: tracks,
                                      palette: palette,
                                      onInfo: { selectedTrackForInfo = $0 })
-                            .entrance(.slide, delay: 0.15 + Double(index) * 0.035, enabled: introRunning && index < 14)
+                            .rowIntro(intro && index < 14, delay: 0.04 + Double(index) * 0.02)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -94,10 +98,6 @@ struct AlbumTracksListView: View {
             ToolbarItem(placement: .primaryAction) {
                 albumMenu(tracks)
             }
-        }
-        .task {
-            try? await Task.sleep(for: .seconds(1.5))
-            introRunning = false
         }
     }
 
@@ -170,6 +170,41 @@ struct AlbumTracksListView: View {
             Image(systemName: "ellipsis")
         }
         .accessibilityLabel("Altro")
+    }
+}
+
+// MARK: - Row entrance
+
+/// A row sliding in as the page opens. Whether it does is decided when the row is created and
+/// kept in the row itself, so the end of the intro redraws nothing else.
+private struct RowIntro: ViewModifier {
+    @State private var shown: Bool
+    let delay: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(playing: Bool, delay: Double) {
+        _shown = State(initialValue: !playing)
+        self.delay = delay
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(x: shown ? 0 : 28)
+            .onAppear {
+                guard !shown else { return }
+                if reduceMotion {
+                    shown = true
+                } else {
+                    withAnimation(.soft(0.45).delay(delay)) { shown = true }
+                }
+            }
+    }
+}
+
+private extension View {
+    func rowIntro(_ playing: Bool, delay: Double) -> some View {
+        modifier(RowIntro(playing: playing, delay: delay))
     }
 }
 

@@ -12,6 +12,10 @@ class JellyfinViewModel: ObservableObject {
 
     // MARK: - Published Properties (Stato dell'UI)
     @Published private(set) var audioItems: [AudioItem] = []
+    /// Bumped with every new `audioItems` (library load, logout): what sorted lists built from
+    /// the songs key their cache on, so a tab switch doesn't rebuild them. Not published:
+    /// `audioItems` already is.
+    private(set) var libraryRevision = 0
     @Published private(set) var albums: [AlbumItem] = []
     /// Artist shown for a song, worked out with the library load (rows ask for it constantly).
     /// A plain value: the mixes and statistics copy it into their background tasks.
@@ -485,6 +489,10 @@ class JellyfinViewModel: ObservableObject {
         MixStore.shared.reset()
         ScrobbleStatsStore.shared.reset()
         audioItems = []
+        libraryRevision += 1
+        albumTrackCache = [:]
+        albumTrackOrder = []
+        libraryAlbumTracks = [:]
         albums = []
         rawArtists = []
         rebuildArtistIndex()
@@ -614,19 +622,59 @@ class JellyfinViewModel: ObservableObject {
         isLoading = false
     }
     
+    // MARK: - Album pages
+
+    /// Songs fetched from the server per album (last 30), with their media sources.
+    private var albumTrackCache: [String: [AudioItem]] = [:]
+    private var albumTrackOrder: [String] = []
+    /// The library's own songs of an album, filtered once. The library list is sorted by the
+    /// server's SortName (disc, track, title), so an album's songs come out in track order.
+    private var libraryAlbumTracks: [String: [AudioItem]] = [:]
+
+    /// What an album page shows right now: the server's answer if it was fetched before,
+    /// else the songs already in memory. Cheap enough for a view body (a lookup).
+    func albumTracks(for albumId: String) -> [AudioItem] {
+        if let fetched = albumTrackCache[albumId] { return fetched }
+        if let known = libraryAlbumTracks[albumId] { return known }
+        let known = audioItems.filter { $0.AlbumId == albumId }
+        if libraryAlbumTracks.count > 40 { libraryAlbumTracks = [:] }
+        libraryAlbumTracks[albumId] = known
+        return known
+    }
+
+    private func rememberAlbumTracks(_ tracks: [AudioItem], for albumId: String) {
+        albumTrackCache[albumId] = tracks
+        albumTrackOrder.removeAll { $0 == albumId }
+        albumTrackOrder.append(albumId)
+        if albumTrackOrder.count > 30 { albumTrackCache[albumTrackOrder.removeFirst()] = nil }
+    }
+
+    private func sameSongs(_ a: [AudioItem], _ b: [AudioItem]) -> Bool {
+        a.count == b.count && !zip(a, b).contains { $0.Id != $1.Id }
+    }
+
+    /// Opens an album: its songs show at once from memory and the server refreshes them in the
+    /// background, replacing the list only if it differs (the page never goes blank).
     func fetchAlbumTracks(albumId: String) async {
         guard let api = apiService else {
             self.errorMessage = "Server URL non impostata."
             return
         }
-        isLoadingAlbum = true
-        selectedAlbumTracks = []
+        let shown = albumTracks(for: albumId)
+        // `selectedAlbumTracks` follows the open album (the info sheet and the Mac page read it).
+        if !sameSongs(selectedAlbumTracks, shown) { selectedAlbumTracks = shown }
+        // The spinner is for an album with nothing to show yet.
+        if shown.isEmpty { isLoadingAlbum = true }
         do {
-            self.selectedAlbumTracks = try await api.fetchAlbumTracks(albumId: albumId)
+            let fetched = try await api.fetchAlbumTracks(albumId: albumId)
+            rememberAlbumTracks(fetched, for: albumId)
+            if !sameSongs(selectedAlbumTracks, fetched) { selectedAlbumTracks = fetched }
         } catch {
-            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "Errore nel caricamento delle tracce dell'album."
+            if shown.isEmpty {
+                self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "Errore nel caricamento delle tracce dell'album."
+            }
         }
-        isLoadingAlbum = false
+        if isLoadingAlbum { isLoadingAlbum = false }
     }
 
     /// Fetches album tracks without mutating shared state (for CarPlay use).
@@ -662,6 +710,8 @@ class JellyfinViewModel: ObservableObject {
     /// turn of the main actor, so they redraw once, and nothing is computed here.
     private func apply(_ library: LibraryDerived) {
         audioItems = library.tracks
+        libraryRevision += 1
+        libraryAlbumTracks = [:]
         albums = library.albums
         rawArtists = library.rawArtists
         creditKeyCache = [:]
@@ -670,6 +720,8 @@ class JellyfinViewModel: ObservableObject {
         artistNameLookup = library.artistNames
         scrobbleTracks = library.scrobbleTracks
         allAvailableGenres = library.genres
+        // The Brani list is sorted in the background now, so opening the tab finds it ready.
+        TrackSectionsStore.shared.prewarm(tracks: library.tracks, names: library.artistNames, revision: libraryRevision)
     }
 
     /// Returns true if the library cache has expired based on the user's refresh interval.

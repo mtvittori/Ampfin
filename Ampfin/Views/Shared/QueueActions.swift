@@ -182,7 +182,8 @@ private struct QueueDragSwipe: ViewModifier {
             .gesture(HorizontalPan { phase, translation in
                 switch phase {
                 case .changed:
-                    dragX = translation
+                    // A small dead zone: a tap that drifts a few points is not a swipe.
+                    dragX = abs(translation) < 14 ? 0 : translation
                 case .ended:
                     if abs(translation) >= threshold {
                         if translation > 0 { viewModel.playNext([track]) } else { viewModel.addToQueue([track]) }
@@ -229,6 +230,9 @@ private struct HorizontalPan: UIGestureRecognizerRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            // Never from the screen's left edge: that is the swipe back.
+            let start = pan.location(in: nil).x - pan.translation(in: nil).x
+            guard start > 32 else { return false }
             let velocity = pan.velocity(in: pan.view)
             return abs(velocity.x) > abs(velocity.y) * 2
         }

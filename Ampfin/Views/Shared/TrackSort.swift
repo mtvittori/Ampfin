@@ -22,13 +22,15 @@ enum TrackSort: String, CaseIterable, Identifiable {
             return tracks.sorted { $0.Name.localizedStandardCompare($1.Name) == .orderedAscending }
         case .artist:
             // Artist, then album, then the library's own order (no track numbers here).
-            return tracks.enumerated().sorted { a, b in
-                let byArtist = (artists[a.element.Id] ?? "").localizedStandardCompare(artists[b.element.Id] ?? "")
+            // The keys are looked up once per song, not at every comparison.
+            let keyed = tracks.enumerated().map { (offset: $0.offset, artist: artists[$0.element.Id] ?? "", album: $0.element.Album ?? "") }
+            return keyed.sorted { a, b in
+                let byArtist = a.artist.localizedStandardCompare(b.artist)
                 if byArtist != .orderedSame { return byArtist == .orderedAscending }
-                let byAlbum = (a.element.Album ?? "").localizedStandardCompare(b.element.Album ?? "")
+                let byAlbum = a.album.localizedStandardCompare(b.album)
                 if byAlbum != .orderedSame { return byAlbum == .orderedAscending }
                 return a.offset < b.offset
-            }.map(\.element)
+            }.map { tracks[$0.offset] }
         case .added:
             // Newest first; songs without a date (old cache) go last, in their order.
             return tracks.sortedNewestFirst(by: \.dateAddedDate)

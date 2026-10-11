@@ -3,60 +3,32 @@ import SwiftUI
 struct TracksView: View {
     @EnvironmentObject var viewModel: JellyfinViewModel
     @State private var searchText = ""
+    /// Sorted and grouped in the background and kept across tab switches (see TrackSectionsStore):
+    /// 9.700 songs are too many to sort on the main thread at every visit.
+    @ObservedObject private var store = TrackSectionsStore.shared
 
-    var filteredTracks: [AudioItem] {
-        // On iPhone the search field filters only the Cerca tab; on the Mac the toolbar
-        // search filters the section in view.
-        #if os(macOS)
-        let query = viewModel.globalSearchQuery.isEmpty ? searchText : viewModel.globalSearchQuery
-        #else
-        let query = searchText
-        #endif
-        if query.isEmpty {
-            return viewModel.audioItems
-        } else {
-            return viewModel.audioItems.filter {
-                $0.Name.localizedCaseInsensitiveContains(query) ||
-                ($0.mainArtistName ?? "").localizedCaseInsensitiveContains(query) ||
-                ($0.Album ?? "").localizedCaseInsensitiveContains(query)
-            }
-        }
-    }
-    
     @AppStorage("tracksSort") private var sort: TrackSort = .name
-    /// Sorted and grouped by letter once per change: 8.000 songs are too many to sort at
-    /// every redraw.
-    @State private var sections: [LetterSection<AudioItem>] = []
-    @State private var queue: [AudioItem] = []
     @AppStorage(LetterIndexStyle.storageKey) private var indexStyle = LetterIndexStyle.classic.rawValue
     private var classicIndex: Bool { indexStyle == LetterIndexStyle.classic.rawValue }
 
-    /// Letters mean nothing in date order: month headers instead, and no index.
-    private var showsLetters: Bool { sort != .added }
-
-    /// What the sections depend on; a change rebuilds them.
-    private var sectionsKey: String {
-        "\(sort.rawValue)|\(filteredTracks.count)|\(viewModel.audioItems.first?.Id ?? "")|\(viewModel.audioItems.last?.Id ?? "")|\(viewModel.artists.count)"
-    }
-
-    private func rebuildSections() {
-        let tracks = filteredTracks
-        let artists = sort == .artist ? viewModel.artistNames(for: tracks) : [:]
-        let sorted = sort.sorted(tracks, artists: artists)
-        switch sort {
-        case .name: sections = LetterIndex.sections(sorted, name: \.Name)
-        case .artist: sections = LetterIndex.sections(sorted) { artists[$0.Id] ?? "" }
-        case .added: sections = TrackSort.monthSections(sorted)
-        }
-        // Plays in the order on screen, "#" included.
-        queue = sections.flatMap(\.items)
+    private var query: String {
+        // On iPhone the search field filters only the Cerca tab; on the Mac the toolbar
+        // search filters the section in view.
+        #if os(macOS)
+        return viewModel.globalSearchQuery.isEmpty ? searchText : viewModel.globalSearchQuery
+        #else
+        return searchText
+        #endif
     }
 
     var body: some View {
+        let key = TrackSectionsStore.Key(library: viewModel.libraryRevision, sort: sort, query: query)
+        // The list for this sort when ready, else the previous one (never a blank page).
+        let result = store.result(for: key)
         ScrollViewReader { proxy in
             List {
                 // Play everything or shuffle, as at the top of an album.
-                LibraryPlayButtons(tracks: queue) { sortMenu }
+                LibraryPlayButtons(tracks: result.queue) { sortMenu }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 10, trailing: 16))
                     .albumBackdropRow()
@@ -64,26 +36,13 @@ struct TracksView: View {
                 // Sections with their letter in both index styles. A single flat list of
                 // 8.000 rows mixing letters and songs lagged badly: the List lays out
                 // sections lazily, the flat ForEach it had to measure as a whole.
-                ForEach(sections) { section in
-                    Section {
-                        ForEach(section.items) { item in
-                            row(for: item)
-                                .albumBackdropRow()
-                                .queueSwipeActions(item, viewModel: viewModel)
-                        }
-                    } header: {
-                        Text(section.letter)
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .sectionIndexLabel(showsLetters ? section.letter : nil)
-                }
+                TrackSectionsContent(viewModel: viewModel, result: result)
             }
             .listStyle(.plain)
-            .systemLetterIndex(classicIndex && showsLetters)
-            .letterScrubber(letters: classicIndex || !showsLetters ? [] : sections.map(\.letter)) { letter in
+            .systemLetterIndex(classicIndex && result.showsLetters)
+            .letterScrubber(letters: classicIndex || !result.showsLetters ? [] : result.sections.map(\.letter)) { letter in
                 // The section's first song: header rows can't be scrolled to.
-                if let first = sections.first(where: { $0.letter == letter })?.items.first {
+                if let first = result.sections.first(where: { $0.letter == letter })?.items.first {
                     proxy.scrollTo(first.id, anchor: .top)
                 }
             }
@@ -97,7 +56,10 @@ struct TracksView: View {
             .libraryRefreshBanner()
         }
         .navigationTitle("Brani")
-        .task(id: sectionsKey) { rebuildSections() }
+        // Back on the tab with nothing changed this finds the list ready and does nothing.
+        .task(id: key) {
+            store.ensure(key, tracks: viewModel.audioItems, names: viewModel.artistNameLookup)
+        }
     }
 
     /// "Ordina per Nome / Artista / Aggiunti di recente", the third button next to Play and Shuffle.
@@ -116,16 +78,63 @@ struct TracksView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Ordina per \(sort.title.lowercased())")
     }
+}
 
-    @ViewBuilder
-    private func row(for item: AudioItem) -> some View {
+/// The letter sections and their rows. Its own view, with only values and a reference as
+/// properties: SwiftUI skips its body (and the ForEach closure over every song) when the
+/// list hasn't changed, instead of rebuilding 9.700 rows at each view model update.
+private struct TrackSectionsContent: View {
+    /// Not observed on purpose: the rows observe what they show.
+    let viewModel: JellyfinViewModel
+    let result: TrackSectionsResult
+    @Environment(\.albumBackdropActive) private var backdropActive
+
+    var body: some View {
+        ForEach(result.sections) { section in
+            Section {
+                ForEach(section.items) { item in
+                    // Only this row, a struct built here and evaluated when it scrolls in: it
+                    // used to be a method of TracksView whose whole view tree (cover, buttons,
+                    // menu) was assembled inline for every song at every redraw. No conditional
+                    // modifier around it either, so the list can count the rows without
+                    // resolving them.
+                    TrackListRow(item: item, list: result)
+                        .equatable()
+                        .listRowBackground(backdropActive ? Color.clear : nil)
+                        .queueSwipeActions(item, viewModel: viewModel)
+                }
+            } header: {
+                Text(section.letter)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .sectionIndexLabel(result.showsLetters ? section.letter : nil)
+        }
+    }
+}
+
+/// A song row of Brani. Equatable on what it shows (the list it plays from by identity), so
+/// a parent redraw doesn't re-evaluate rows that haven't changed.
+private struct TrackListRow: View, Equatable {
+    @EnvironmentObject var viewModel: JellyfinViewModel
+    let item: AudioItem
+    /// The queue a tap plays: the whole list in screen order.
+    let list: TrackSectionsResult
+
+    static func == (lhs: TrackListRow, rhs: TrackListRow) -> Bool {
+        lhs.item.Id == rhs.item.Id && lhs.item.Name == rhs.item.Name && lhs.list === rhs.list
+    }
+
+    var body: some View {
+        let isCurrent = viewModel.currentlyPlayingItem?.id == item.id
+        let isFavorite = viewModel.isTrackFavorite(item.id)
         let artworkURL = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 160)
-        
+
         HStack(spacing: 10) {
             // Only the cover and text play: the controls to the right are siblings, so
             // their taps don't start playback and the long press opens the menu.
             Button {
-                viewModel.playerManager.play(item: item, in: queue)
+                viewModel.playerManager.play(item: item, in: list.queue)
             } label: {
                 HStack(spacing: 10) {
                     CachedAsyncImage(url: artworkURL) { image in
@@ -155,27 +164,26 @@ struct TracksView: View {
             Button(action: {
                 viewModel.toggleFavoriteTrack(item.id)
             }) {
-                Image(systemName: viewModel.isTrackFavorite(item.id) ? "heart.fill" : "heart")
-                    .foregroundColor(viewModel.isTrackFavorite(item.id) ? .red : .secondary)
+                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                    .foregroundColor(isFavorite ? .red : .secondary)
                     .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: viewModel.isTrackFavorite(item.id))
+                    .symbolEffect(.bounce, value: isFavorite)
             }
             .buttonStyle(PlainButtonStyle())
 
             // Download
             TrackDownloadButton(item: item)
                 .padding(.trailing, 4)
-            
-            if viewModel.currentlyPlayingItem?.id == item.id {
+
+            if isCurrent {
                 // Indicate currently playing
                 Image(systemName: viewModel.isPlaying ? "waveform" : "pause.circle")
                     .foregroundColor(.accentColor)
                     .symbolEffect(.variableColor.iterative, isActive: viewModel.isPlaying)
                     .contentTransition(.symbolEffect(.replace))
             }
-            
+
             Button(action: {
-                let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
                 if isCurrent {
                     if viewModel.isPlaying {
                         viewModel.playerManager.pause()
@@ -183,23 +191,26 @@ struct TracksView: View {
                         viewModel.playerManager.play()
                     }
                 } else {
-                    viewModel.playerManager.play(item: item, in: queue)
+                    viewModel.playerManager.play(item: item, in: list.queue)
                 }
             }) {
-                let isCurrent = (viewModel.currentlyPlayingItem?.id == item.id)
                 let playing = viewModel.isPlaying && isCurrent
+                // A material disc, not `.glass`: a glass layer per row cost more than it showed.
                 Image(systemName: playing ? "pause.fill" : "play.fill")
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 30, height: 30)
+                    .frame(width: 36, height: 36)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+                    .contentShape(Circle())
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .buttonStyle(.pressable)
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+        // The menu's content is built when it opens, nothing of it is worked out here.
         .contextMenu {
             Button {
-                viewModel.playerManager.play(item: item, in: queue)
+                viewModel.playerManager.play(item: item, in: list.queue)
             } label: {
                 Label("Riproduci", systemImage: "play.fill")
             }
