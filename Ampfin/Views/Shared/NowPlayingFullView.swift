@@ -84,8 +84,6 @@ struct NowPlayingFullView: View {
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
     /// Option in Settings → Aspetto: shuffle and repeat on either side of the transport.
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var showsModeButtons = false
-    /// Settings → "DR nel player": the line under the scrubber takes room only when it is on.
-    @AppStorage(DRSettings.playerBadgeKey) private var showsDR = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heartFlash = false
     @State private var heartFlashTask: Task<Void, Never>?
@@ -212,26 +210,17 @@ struct NowPlayingFullView: View {
     private func appleMusicLayout(_ geo: GeometryProxy) -> some View {
         let width = geo.size.width
         let showingArtwork = panel == .artwork
+        // iPhone: just above the home indicator (icons ~42 pt from the edge, as in Apple Music),
+        // but out of its swipe zone. The view ignores the safe area, so this is measured from
+        // the screen's bottom edge.
+        let bottomPadding: CGFloat = sizeClass == .compact ? max(geo.safeAreaInsets.bottom - 14, 10) : max(geo.safeAreaInsets.bottom, 34) + 4
+        // The cover takes what the controls leave (so no empty band under it), but at most 1.2x
+        // its width: taller than that and aspect-fill would crop too much of the sides. The
+        // spare height on tall screens goes to the gaps between the control groups.
+        let coverHeight = min(max(geo.size.height - Self.controlsHeight - bottomPadding, width * 0.7), width * 1.2)
 
-        return ZStack(alignment: .top) {
-            // Full-bleed cover, fading out downwards. Hidden behind lyrics and queue.
-            CachedAsyncImage(url: viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200), targetSize: width,
-                content: { $0.resizable().aspectRatio(contentMode: .fill) },
-                placeholder: { Color.clear }
-            )
-            .id(item.AlbumId ?? item.id)
-            .frame(width: width, height: width)
-            .clipped()
-            .mask {
-                LinearGradient(stops: [.init(color: .black, location: 0.5), .init(color: .clear, location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .playerArtwork(in: artworkNamespace)
-            // Edge to edge it stays put when paused: shrinking would open gaps at the sides.
-            .opacity(showingArtwork ? 1 : 0)
-            .animation(.easeInOut(duration: 0.35), value: panel)
-
-
+        return VStack(spacing: 0) {
+            // Cover region: full-bleed cover behind, the grab handle and, over it, lyrics or queue.
             VStack(spacing: 0) {
                 Capsule()
                     .fill(fg.opacity(0.5))
@@ -252,39 +241,71 @@ struct NowPlayingFullView: View {
                 }
                 .frame(maxHeight: .infinity)
                 .transition(.opacity)
-
-                titleRow
-                    .padding(.horizontal, 32)
-                    .padding(.top, 14)
-
-                appleScrubber
-                    .padding(.horizontal, 32)
-                    .padding(.top, 20)
-
-                // The DR line above it fills most of the gap.
-                transportRow
-                    .padding(.top, showsDR ? 6 : 22)
-
-                #if os(iOS)
-                volumeRow
-                    .padding(.horizontal, 32)
-                    .padding(.top, 26)
-                #endif
-
-                // The view ignores the safe area, so this padding is measured from the screen's
-                // bottom edge: on iPhone 10 pt keeps the row just above the home indicator.
-                bottomRow
-                    .padding(.horizontal, 44)
-                    .padding(.top, 24)
-                    // iPhone: just above the home indicator (icons ~42 pt from the edge, as in
-                    // Apple Music), but out of its swipe zone.
-                    .padding(.bottom, sizeClass == .compact ? max(geo.safeAreaInsets.bottom - 14, 10) : max(geo.safeAreaInsets.bottom, 34) + 4)
             }
+            // A background, so the cover never changes the region's size.
+            .background(alignment: .top) {
+                // Fading out downwards. Hidden behind lyrics and queue.
+                CachedAsyncImage(url: viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200), targetSize: width,
+                    content: { $0.resizable().aspectRatio(contentMode: .fill) },
+                    placeholder: { Color.clear }
+                )
+                .id(item.AlbumId ?? item.id)
+                .frame(width: width, height: coverHeight)
+                .clipped()
+                .mask {
+                    LinearGradient(stops: [.init(color: .black, location: 0.55), .init(color: .clear, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                .playerArtwork(in: artworkNamespace)
+                // Edge to edge it stays put when paused: shrinking would open gaps at the sides.
+                .opacity(showingArtwork ? 1 : 0)
+                .animation(.easeInOut(duration: 0.35), value: panel)
+            }
+            // With the cover: a fixed height. With a panel: all the room there is.
+            .frame(height: showingArtwork ? coverHeight : nil)
+            .frame(maxHeight: showingArtwork ? nil : .infinity)
+
+            // The spacers (only with the cover, whose height is fixed) share out the spare room
+            // evenly, so the gaps grow together instead of one band opening under the cover.
+            titleRow
+                .padding(.horizontal, 32)
+                .padding(.top, 12)
+
+            if showingArtwork { Spacer(minLength: 0) }
+
+            appleScrubber
+                .padding(.horizontal, 32)
+                .padding(.top, 16)
+
+            if showingArtwork { Spacer(minLength: 0) }
+
+            transportRow
+                .padding(.top, 6)
+
+            #if os(iOS)
+            if showingArtwork { Spacer(minLength: 0) }
+
+            volumeRow
+                .padding(.horizontal, 32)
+                .padding(.top, 8)
+            #endif
+
+            if showingArtwork { Spacer(minLength: 0) }
+
+            bottomRow
+                .padding(.horizontal, 44)
+                .padding(.top, 16)
+                .padding(.bottom, bottomPadding)
         }
         .animation(.easeInOut(duration: 0.35), value: panel)
         // Glass buttons and menus follow the page: light on light covers, dark on dark.
         .environment(\.colorScheme, palette.isLight ? .light : .dark)
     }
+
+    /// Height of everything under the cover with the gaps at their minimum, without the bottom
+    /// padding: title 49 + scrubber group 52 + transport 80 + volume 24 + bottom row 40 + the
+    /// fixed paddings (12+16+6+8+16), plus 12 of slack for the info pill's rare second line.
+    private static let controlsHeight: CGFloat = 49 + 52 + 80 + 24 + 40 + 58 + 12
 
     private var heartColor: Color {
         guard viewModel.isTrackFavorite(item.id) else { return fg }
@@ -392,7 +413,7 @@ struct NowPlayingFullView: View {
         let shown = isEditingSlider ? sliderValue : currentTime
         let maxDuration = duration > 0 ? duration : 1
 
-        return VStack(spacing: 8) {
+        return VStack(spacing: 6) {
             PlayerBar(fraction: shown / maxDuration, isDragging: isEditingSlider, color: fg) { fraction in
                 isEditingSlider = true
                 sliderValue = fraction * maxDuration
@@ -403,36 +424,23 @@ struct NowPlayingFullView: View {
             .accessibilityLabel("Posizione")
             .accessibilityValue(formatTime(shown))
 
-            ZStack {
-                HStack {
-                    Text(formatTime(shown))
-                    Spacer()
-                    Text("-" + formatTime(max(duration - shown, 0)))
-                }
-                .font(.footnote.weight(.semibold).monospacedDigit())
-                .foregroundStyle(fg.opacity(0.7))
-
-                Button {
+            // One row: elapsed, the format and DR pill in the middle, remaining. The time
+            // columns have a fixed width so the pill is centred whatever the digits are.
+            HStack(spacing: 6) {
+                Text(formatTime(shown))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .frame(width: 44, alignment: .leading)
+                PlayerInfoPill(quality: qualityText, color: fg) {
                     viewModel.playerManager.refreshAudioOutputInfo()
                     showAudioInfo = true
-                } label: {
-                    Label(qualityText, systemImage: "waveform")
-                        .font(.footnote.weight(.medium))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .foregroundStyle(fg.opacity(0.85))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(fg.opacity(0.15), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Info audio")
+                .frame(maxWidth: .infinity)
+                Text("-" + formatTime(max(duration - shown, 0)))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .frame(width: 44, alignment: .trailing)
             }
-
-            // Song and album DR as plain text under the times. Part of the layout (a fixed
-            // 15 pt line), not an overlay: nothing in it animates or moves with the player's
-            // open, close and drag.
-            DRPlayerLine()
+            .font(.footnote.weight(.semibold).monospacedDigit())
+            .foregroundStyle(fg.opacity(0.7))
         }
     }
 
@@ -446,7 +454,7 @@ struct NowPlayingFullView: View {
     private var transportRow: some View {
         // With the mode buttons the skip buttons' (invisible) tap area narrows, so five
         // controls fit in 393 pt; the glyphs keep their size.
-        let skipWidth: CGFloat = showsModeButtons ? 62 : 80
+        let skipWidth: CGFloat = showsModeButtons ? 66 : 80
         return HStack {
             if showsModeButtons {
                 PlayerModeButton(kind: .shuffle, color: fg)
@@ -480,7 +488,8 @@ struct NowPlayingFullView: View {
         }
         .buttonStyle(PressableStyle())
         .foregroundStyle(fg)
-        .padding(.horizontal, showsModeButtons ? 14 : 22)
+        // The mode glyphs (22 pt in a 44 pt box) line up with the 32 pt page margin.
+        .padding(.horizontal, showsModeButtons ? 21 : 22)
     }
 
     #if os(iOS)
@@ -1184,7 +1193,8 @@ private struct HiddenVolumeView: UIViewRepresentable {
 }
 #endif
 
-/// Shuffle or repeat as a square toggle, filled when on, like the ones on the queue page.
+/// Shuffle or repeat as a bare glyph like the transport's: dimmed when off, accent-coloured
+/// with a small dot under it when on. The dot is an overlay, so the glyph never moves.
 /// It listens to the shuffle flag on its own, so the player page isn't redrawn for it.
 private struct PlayerModeButton: View {
     enum Kind { case shuffle, repeatMode }
@@ -1205,13 +1215,18 @@ private struct PlayerModeButton: View {
             }
         } label: {
             Image(systemName: kind == .shuffle ? "shuffle" : viewModel.repeatMode.iconName)
-                .font(.system(size: 16, weight: .semibold))
-                // On: the page's text color as fill, the icon in the opposite one.
-                .foregroundStyle(isOn ? (color == .black ? Color.white : Color.black) : color.opacity(0.8))
-                .frame(width: 40, height: 32)
-                .background(isOn ? color.opacity(0.9) : color.opacity(0.15),
-                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(isOn ? Color.accentColor : color.opacity(0.55))
                 .contentTransition(.symbolEffect(.replace))
+                .frame(width: 44, height: 44)
+                .overlay(alignment: .bottom) {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 4, height: 4)
+                        .opacity(isOn ? 1 : 0)
+                        .offset(y: -1)
+                }
+                .animation(.snappy(duration: 0.2), value: isOn)
         }
         .buttonStyle(.plain)
         .onReceive(viewModel.playerManager.$isShuffled) { shuffled = $0 }
@@ -1219,6 +1234,75 @@ private struct PlayerModeButton: View {
         .accessibilityValue(kind == .shuffle ? (shuffled ? "attivo" : "spento")
                             : (viewModel.repeatMode == .one ? "un brano" : viewModel.repeatMode == .all ? "tutti" : "spento"))
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// The format and the dynamic range in one pill under the scrubber: "FLAC · 24 bit · 48 kHz | DR 5 · Album 5".
+/// Static text on purpose (no animation, no task: see DRPlayerLine), and it reads the DR itself so
+/// the scrubber's clock refreshes never re-run more than this small view. Tapping opens the audio info.
+private struct PlayerInfoPill: View {
+    let quality: String
+    let color: Color
+    let action: () -> Void
+
+    @AppStorage(DRSettings.playerBadgeKey) private var showsDR = true
+    @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
+    private let now = DRNowPlaying.shared
+
+    private var drText: Text? {
+        guard showsDR else { return nil }
+        return DRPlayerLine.text(song: now.songDR, album: now.albumDR, style: style, albumLabel: "Album")
+    }
+
+    var body: some View {
+        let dr = drText
+        Button(action: action) {
+            // Widest first: icon, then no icon, then two lines (long conversion strings such as
+            // "24 bit · 96 kHz → 48 kHz") so the text stays at 12 pt.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                    line(dr)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(pillShape)
+
+                line(dr)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .background(pillShape)
+
+                VStack(spacing: 1) {
+                    formatText
+                    if let dr { dr.foregroundStyle(color.opacity(0.85)) }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(pillShape)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
+            .foregroundStyle(color.opacity(0.85))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Info audio")
+    }
+
+    private var formatText: Text { Text(quality) }
+
+    private func line(_ dr: Text?) -> some View {
+        HStack(spacing: 7) {
+            formatText
+            if let dr {
+                Rectangle().fill(color.opacity(0.3)).frame(width: 1, height: 11)
+                dr.fontWeight(.semibold).monospacedDigit()
+            }
+        }
+    }
+
+    private var pillShape: some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color.opacity(0.15))
     }
 }
 

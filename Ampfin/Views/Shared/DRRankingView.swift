@@ -72,21 +72,26 @@ struct DRPlayerLine: View {
     }
 
     private var line: Text {
-        let songDR = sample?.song ?? now.songDR
-        let albumDR = sample?.album ?? now.albumDR
-        let song = songDR.map { part("DR \($0)", dr: $0) }
-        let album = albumDR.map { part(compact ? "Album \($0)" : "Album DR \($0)", dr: $0) }
-        switch (song, album) {
+        // Keeps the line's height while the song is unmeasured.
+        Self.text(song: sample?.song ?? now.songDR, album: sample?.album ?? now.albumDR,
+                  style: style, albumLabel: compact ? "Album" : "Album DR")
+            ?? Text(compact ? "" : " ")
+    }
+
+    /// "DR 12 · Album DR 11" with each number in the style's colour; nil when neither is measured.
+    /// Shared with the player's info pill, which passes a shorter `albumLabel`.
+    static func text(song: Int?, album: Int?, style: DRBadgeStyle, albumLabel: String) -> Text? {
+        func part(_ text: String, dr: Int) -> Text {
+            Text(text).foregroundStyle(style.foreground(dr: dr))
+        }
+        let songText = song.map { part("DR \($0)", dr: $0) }
+        let albumText = album.map { part("\(albumLabel) \($0)", dr: $0) }
+        switch (songText, albumText) {
         case let (song?, album?): return Text("\(song) · \(album)")
         case let (song?, nil): return song
         case let (nil, album?): return album
-        // Keeps the line's height while the song is unmeasured.
-        case (nil, nil): return Text(compact ? "" : " ")
+        case (nil, nil): return nil
         }
-    }
-
-    private func part(_ text: String, dr: Int) -> Text {
-        Text(text).foregroundStyle(style.foreground(dr: dr))
     }
 }
 
