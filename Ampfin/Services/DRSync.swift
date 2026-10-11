@@ -47,6 +47,11 @@ enum DRSyncCoding {
         return result
     }
 
+    /// The id as `decode` returns it (32 lowercase hex digits), nil if `encode` would skip it.
+    static func wireId(_ id: String) -> String? {
+        bytes(ofHexId: id) == nil ? nil : id.lowercased().replacingOccurrences(of: "-", with: "")
+    }
+
     /// The 16 bytes of a Jellyfin id (32 hex digits, dashes allowed), nil if it isn't one.
     private static func bytes(ofHexId id: String) -> [UInt8]? {
         let hex = Array(id.lowercased().replacingOccurrences(of: "-", with: "").utf8)
@@ -66,5 +71,40 @@ enum DRSyncCoding {
         case 97...102: return char - 87
         default: return nil
         }
+    }
+}
+
+/// What one sync pass has to do, worked out from plain values so it can run off the main thread
+/// (the library has ~9,000 measured songs: decoding, merging and encoding them is not for the UI).
+enum DRSyncPlanner {
+    struct Plan {
+        /// Entries of the server that win over (or are missing from) the local results.
+        var updates: [String: DRResult] = [:]
+        /// The union, ready to upload; nil when the server already has everything.
+        var chunks: [String]?
+    }
+
+    /// Union of the two sides; per song the newer measurement wins. The server's values carry
+    /// the date of its last upload as their measurement date.
+    static func plan(local: [String: DRResult], remote: [String: Int], remoteDate: Date,
+                     forceUpload: Bool) -> Plan {
+        var plan = Plan()
+        for (id, tenths) in remote {
+            if let mine = local[id] {
+                guard DRSyncCoding.tenths(mine.value) != tenths, remoteDate > mine.measured else { continue }
+            }
+            plan.updates[id] = DRResult(value: Double(tenths) / 10, measured: remoteDate)
+        }
+        let merged = plan.updates.isEmpty ? local : local.merging(plan.updates) { _, remote in remote }
+
+        // Upload when the union holds something the server has different or lacks. Ids that
+        // can't travel (not 32 hex digits) are left out of the comparison, or they would make
+        // every sync look like it has something to send.
+        let differs = merged.contains { id, result in
+            guard let wire = DRSyncCoding.wireId(id) else { return false }
+            return remote[wire] != DRSyncCoding.tenths(result.value)
+        }
+        if differs || forceUpload { plan.chunks = DRSyncCoding.encode(merged) }
+        return plan
     }
 }

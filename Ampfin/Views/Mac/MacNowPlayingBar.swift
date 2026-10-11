@@ -132,7 +132,7 @@ struct MacPlaybackBar: View {
                         VStack(spacing: 1) {
                             HStack(spacing: 6) {
                                 Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                DRPlayerBadges(compact: true)
+                                DRPlayerLine(compact: true)
                                     .layoutPriority(1)
                             }
                             Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))

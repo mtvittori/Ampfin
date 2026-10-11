@@ -31,7 +31,7 @@ struct DRBadge: View {
 }
 
 extension DRBadgeStyle {
-    /// Text color of a player badge.
+    /// Text color of a DR in the player: the DR scale, or plain white or black.
     func foreground(dr: Int) -> Color {
         switch self {
         case .colorata: DRBadge.color(for: dr)
@@ -39,79 +39,48 @@ extension DRBadgeStyle {
         case .nera: .black
         }
     }
-
-    /// Capsule behind it: translucent, dark for white text and light for black text, so both
-    /// stay readable on any cover color (and in light and dark mode).
-    func fill(dr: Int) -> Color {
-        switch self {
-        case .colorata: DRBadge.color(for: dr).opacity(0.18)
-        case .bianca: .black.opacity(0.55)
-        case .nera: .white.opacity(0.75)
-        }
-    }
-
-    /// Hairline that keeps the capsule defined when its fill blends into the background.
-    var outline: Color {
-        switch self {
-        case .colorata: .clear
-        case .bianca: .white.opacity(0.25)
-        case .nera: .black.opacity(0.18)
-        }
-    }
 }
 
-/// "DR 12" and "Album DR 11" capsules for the song playing, when Settings → "DR nel player" is
-/// on (the default). The values come ready from DRNowPlaying, so this view looks nothing up,
-/// observes nothing but those two numbers, and takes no part in the player's layout: the
-/// container has a fixed height, and the capsules fade in only after `revealAfter` (the
-/// player's slide-in), never during it.
-struct DRPlayerBadges: View {
-    /// Shorter text ("Album 11") for the Mac bar.
+/// "DR 12 · Album DR 11" for the song playing, as plain text, when Settings → "DR nel player"
+/// is on (the default). It used to be animated capsules in an overlay, which glitched the
+/// player's close; now it is static text with nothing to animate, no task and no transition.
+/// The values come ready from DRNowPlaying, so this looks nothing up, and the line has a fixed
+/// height (unless `compact`) so the layout never moves when a song is or isn't measured.
+struct DRPlayerLine: View {
+    /// Shorter text ("Album 11") and no reserved height, for the Mac bar.
     var compact = false
-    private let revealAfter: Duration
 
     @AppStorage(DRSettings.playerBadgeKey) private var enabled = true
     @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
-    @State private var revealed: Bool
     private let now = DRNowPlaying.shared
 
-    init(compact: Bool = false, revealAfter: Duration = .zero) {
-        self.compact = compact
-        self.revealAfter = revealAfter
-        _revealed = State(initialValue: revealAfter == .zero)
-    }
+    static let height: CGFloat = 15
 
     var body: some View {
-        let visible = enabled && revealed
-        HStack(spacing: 6) {
-            if let song = now.songDR { capsule("DR \(song)", dr: song, label: "Gamma dinamica \(song)") }
-            if let album = now.albumDR {
-                capsule(compact ? "Album \(album)" : "Album DR \(album)", dr: album,
-                        label: "Gamma dinamica dell'album \(album)")
-            }
-        }
-        .frame(height: enabled && !compact ? 18 : nil)
-        .opacity(visible ? 1 : 0)
-        .animation(.easeOut(duration: 0.25), value: revealed)
-        .accessibilityHidden(!visible)
-        .task {
-            guard !revealed else { return }
-            try? await Task.sleep(for: revealAfter)
-            revealed = true
+        if enabled {
+            line
+                .font(.system(size: compact ? 11 : 12, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(height: compact ? nil : Self.height)
         }
     }
 
-    private func capsule(_ text: String, dr: Int, label: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .monospacedDigit()
-            .foregroundStyle(style.foreground(dr: dr))
-            .lineLimit(1)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(style.fill(dr: dr), in: Capsule())
-            .overlay(Capsule().strokeBorder(style.outline, lineWidth: 0.5))
-            .accessibilityLabel(label)
+    private var line: Text {
+        let song = now.songDR.map { part("DR \($0)", dr: $0) }
+        let album = now.albumDR.map { part(compact ? "Album \($0)" : "Album DR \($0)", dr: $0) }
+        switch (song, album) {
+        case let (song?, album?): return Text("\(song) · \(album)")
+        case let (song?, nil): return song
+        case let (nil, album?): return album
+        // Keeps the line's height while the song is unmeasured.
+        case (nil, nil): return Text(compact ? "" : " ")
+        }
+    }
+
+    private func part(_ text: String, dr: Int) -> Text {
+        Text(text).foregroundStyle(style.foreground(dr: dr))
     }
 }
 
@@ -802,6 +771,7 @@ private struct DRAnalysisHeader: View {
     @ObservedObject private var analyzer = DRAnalyzer.shared
     @ObservedObject private var store = DRStore.shared
     @State private var pending = 0
+    @State private var hasCounted = false
 
     /// Changes when something that decides how many songs are left to measure changes.
     private var pendingKey: String {
@@ -857,8 +827,18 @@ private struct DRAnalysisHeader: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+        // The count walks the whole library (on iOS with a file check per song), so it runs off
+        // the main thread, and a burst of changes (a run adds a song every few seconds) counts
+        // once. The task ends with the page: nothing is counted while it isn't visible.
         .task(id: pendingKey) {
-            pending = analyzer.pendingCount(in: items)
+            if hasCounted {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+            }
+            let count = await analyzer.pendingCount(in: items)
+            guard !Task.isCancelled else { return }
+            pending = count
+            hasCounted = true
         }
     }
 }

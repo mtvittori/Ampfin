@@ -56,13 +56,25 @@ final class DRStore: ObservableObject {
     private var resyncRequested = false
     private var saveTask: Task<Void, Never>?
     private var uploadTask: Task<Void, Never>?
+    /// Counts the local changes, so a sync pass can tell whether results arrived while it ran.
+    private var revision = 0
+    /// Failed uploads in a row, for the retry delay (reset by a success or a new measurement).
+    private var failedUploads = 0
+    /// The read of the saved file, which runs off the main thread: syncing and saving wait for it.
+    private var loadTask: Task<Void, Never>?
 
     private let fileURL: URL
 
     /// `fileURL` is only different in tests, which must not touch the user's results.
     init(fileURL: URL = DRStore.defaultFileURL) {
         self.fileURL = fileURL
-        results = Self.loadFromDisk(fileURL)
+        // ~400 KB of JSON: reading it in init blocked the first screen. Results recorded
+        // meanwhile are newer than the file, so they win.
+        loadTask = Task { [fileURL] in
+            let saved = await Task.detached(priority: .userInitiated) { Self.loadFromDisk(fileURL) }.value
+            guard !saved.isEmpty else { return }
+            results = saved.merging(results) { _, current in current }
+        }
     }
 
     func result(for itemId: String) -> DRResult? { results[itemId] }
@@ -77,6 +89,8 @@ final class DRStore: ObservableObject {
     /// Stores a measurement; it reaches the disk and the server a little later.
     func record(_ itemId: String, _ result: DRResult) {
         results[itemId] = result
+        revision += 1
+        failedUploads = 0
         needsUpload = true
         scheduleSave()
         scheduleUpload(after: .seconds(10))
@@ -87,6 +101,8 @@ final class DRStore: ObservableObject {
     func recordMany(_ new: [String: DRResult]) {
         guard !new.isEmpty else { return }
         results.merge(new) { _, imported in imported }
+        revision += 1
+        failedUploads = 0
         needsUpload = true
         scheduleSave()
         flushUpload()
@@ -106,7 +122,7 @@ final class DRStore: ObservableObject {
         return support.appendingPathComponent("Ampfin", isDirectory: true).appendingPathComponent("dr-results.json")
     }()
 
-    private static func loadFromDisk(_ fileURL: URL) -> [String: DRResult] {
+    private nonisolated static func loadFromDisk(_ fileURL: URL) -> [String: DRResult] {
         guard let data = try? Data(contentsOf: fileURL) else { return [:] }
         return (try? JSONDecoder().decode([String: DRResult].self, from: data)) ?? [:]
     }
@@ -117,6 +133,8 @@ final class DRStore: ObservableObject {
         saveTask = Task {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
+            // Never write before the file has been read: it would replace it with a part.
+            await loadTask?.value
             let snapshot = results
             let url = fileURL
             await Task.detached(priority: .utility) {
@@ -162,43 +180,46 @@ final class DRStore: ObservableObject {
         } while resyncRequested
     }
 
+    /// The slow parts (download and parse of the server's copy, decode, merge, encode, upload)
+    /// run in detached tasks on plain values; the main actor only takes a snapshot and then
+    /// assigns the entries that changed, once.
     private func syncOnce() async {
         guard let api else { return }
+        await loadTask?.value
         do {
-            let remote = try await api.loadDRChunks()
-            let remoteTenths = remote.map { DRSyncCoding.decode(chunks: $0.chunks) } ?? [:]
-            merge(remoteTenths, date: remote?.date ?? .distantPast)
+            let local = results
+            let startRevision = revision
+            let forceUpload = needsUpload
+            let plan: DRSyncPlanner.Plan = try await Task.detached(priority: .utility) {
+                let remote = try await api.loadDRChunks()
+                let remoteTenths = remote.map { DRSyncCoding.decode(chunks: $0.chunks) } ?? [:]
+                return DRSyncPlanner.plan(local: local, remote: remoteTenths,
+                                          remoteDate: remote?.date ?? .distantPast, forceUpload: forceUpload)
+            }.value
 
-            // Upload when the union holds something the server has different or lacks.
-            let differs = results.contains { remoteTenths[$0.key] != DRSyncCoding.tenths($0.value.value) }
-            guard differs || needsUpload else { return }
-            needsUpload = false
-            let chunks = DRSyncCoding.encode(results)
+            if !plan.updates.isEmpty {
+                // A measurement taken during the sync is newer than the server's value.
+                results.merge(plan.updates) { current, remote in current.measured >= remote.measured ? current : remote }
+                scheduleSave()
+            }
+            guard let chunks = plan.chunks else { failedUploads = 0; return }
+            // Results that arrived meanwhile are not in these chunks: keep the flag for the next pass.
+            if revision == startRevision { needsUpload = false }
             do {
-                try await api.saveDRChunks(chunks, date: Date())
+                try await Task.detached(priority: .utility) {
+                    try await api.saveDRChunks(chunks, date: Date())
+                }.value
+                failedUploads = 0
             } catch {
                 needsUpload = true
                 throw error
             }
         } catch {
-            // Offline or server error: keep the flag and try again in a minute.
-            if needsUpload { scheduleUpload(after: .seconds(60)) }
+            // Offline or server error: keep the flag and try again, a little later each time and
+            // not forever (a new measurement starts over).
+            failedUploads += 1
+            if needsUpload, failedUploads <= 6 { scheduleUpload(after: .seconds(60 * failedUploads)) }
         }
-    }
-
-    /// Union of the two sides; per song the newer measurement wins. The server's values
-    /// carry the date of its last upload as their measurement date.
-    private func merge(_ remote: [String: Int], date: Date) {
-        var merged = results
-        for (id, tenths) in remote {
-            if let local = merged[id] {
-                guard DRSyncCoding.tenths(local.value) != tenths, date > local.measured else { continue }
-            }
-            merged[id] = DRResult(value: Double(tenths) / 10, measured: date)
-        }
-        guard merged != results else { return }
-        results = merged
-        scheduleSave()
     }
 }
 
@@ -244,14 +265,27 @@ final class DRAnalyzer: ObservableObject {
     }
 
     /// How many of `items` could be measured now and still have no DR (for the button label).
-    func pendingCount(in items: [AudioItem]) -> Int {
+    /// Counting thousands of songs means, on iOS, a cache key and a file check for each, so
+    /// the main actor only takes three snapshots and the counting runs in a detached task.
+    func pendingCount(in items: [AudioItem]) async -> Int {
         let results = DRStore.shared.results
         if analyzesWholeLibrary {
-            return items.reduce(0) { results[$1.Id] == nil ? $0 + 1 : $0 }
+            return await Task.detached(priority: .utility) {
+                items.reduce(0) { results[$1.Id] == nil ? $0 + 1 : $0 }
+            }.value
         }
-        return items.reduce(0) { count, item in
-            results[item.Id] == nil && hasLocalFile(item.Id) ? count + 1 : count
-        }
+        let downloaded = DownloadManager.shared.downloadedIdsSnapshot
+        // Every stream URL of this server has the same query, which is all the cache key uses.
+        guard let sample = api?.streamURL(for: "x") else { return 0 }
+        return await Task.detached(priority: .utility) {
+            let cache = AudioStreamCache.shared
+            return items.reduce(0) { count, item in
+                guard results[item.Id] == nil else { return count }
+                let local = downloaded.contains(item.Id)
+                    || cache.containsFile(forKey: cache.key(itemId: item.Id, url: sample))
+                return local ? count + 1 : count
+            }
+        }.value
     }
 
     func isQueuedOrMeasuring(_ itemId: String) -> Bool { active.contains(itemId) }

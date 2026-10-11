@@ -80,6 +80,8 @@ struct NowPlayingFullView: View {
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
     /// Option in Settings → Aspetto: shuffle and repeat on either side of the transport.
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var showsModeButtons = false
+    /// Settings → "DR nel player": the line under the scrubber takes room only when it is on.
+    @AppStorage(DRSettings.playerBadgeKey) private var showsDR = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heartFlash = false
     @State private var heartFlashTask: Task<Void, Never>?
@@ -240,8 +242,9 @@ struct NowPlayingFullView: View {
                     .padding(.horizontal, 32)
                     .padding(.top, 20)
 
+                // The DR line above it fills most of the gap.
                 transportRow
-                    .padding(.top, 22)
+                    .padding(.top, showsDR ? 6 : 22)
 
                 #if os(iOS)
                 volumeRow
@@ -364,14 +367,6 @@ struct NowPlayingFullView: View {
     /// Thick bar, elapsed and remaining time, the format badge in the middle.
     private var appleScrubber: some View {
         ClockReader(clock: clock) { time in scrubber(at: time) }
-            // Song and album DR under the times, in the gap above the transport so the layout
-            // doesn't move. Outside the ClockReader (it must not re-run with the clock), and
-            // revealed once the slide-in is over.
-            .overlay(alignment: .bottom) {
-                DRPlayerBadges(revealAfter: .milliseconds(650))
-                    .offset(y: 22)
-                    .allowsHitTesting(false)
-            }
     }
 
     private func scrubber(at currentTime: TimeInterval) -> some View {
@@ -414,6 +409,11 @@ struct NowPlayingFullView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Info audio")
             }
+
+            // Song and album DR as plain text under the times. Part of the layout (a fixed
+            // 15 pt line), not an overlay: nothing in it animates or moves with the player's
+            // open, close and drag.
+            DRPlayerLine()
         }
     }
 
@@ -656,7 +656,7 @@ struct NowPlayingFullView: View {
                 HStack(spacing: 4) {
                     Text(audioInfoSummary(pm: pm))
                         .lineLimit(1)
-                    DRPlayerBadges()
+                    DRPlayerLine(compact: true)
                 }
                 .font(.caption)
                 Spacer(minLength: 0)

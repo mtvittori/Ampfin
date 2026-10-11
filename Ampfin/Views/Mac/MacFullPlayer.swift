@@ -66,7 +66,7 @@ struct MacFullPlayer: View {
                     if !player.currentCodec.isEmpty {
                         Text(player.currentCodec).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    DRPlayerBadges(revealAfter: .milliseconds(600))
+                    DRPlayerLine()
                 }
             }
 

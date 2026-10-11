@@ -117,6 +117,9 @@ final class DownloadManager: NSObject {
         }
     }
 
+    /// The downloaded ids as a value, for counting off the main thread (a copy-on-write handle).
+    var downloadedIdsSnapshot: Set<String> { downloadedIds }
+
     /// Whether any song has been downloaded. Observed like `isDownloaded`.
     var hasDownloads: Bool {
         _ = activity.revision
