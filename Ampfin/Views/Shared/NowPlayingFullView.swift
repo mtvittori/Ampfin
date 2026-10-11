@@ -68,6 +68,9 @@ struct NowPlayingFullView: View {
     /// The close drag. A reference type on purpose: as @State, every touch frame re-ran the
     /// whole body (cover, glass buttons, panels); now only `PlayerDragOffset` redraws.
     @State private var drag = PlayerDrag()
+    /// True while the close drag is in progress. When SwiftUI cancels the gesture, `onEnded`
+    /// never runs, so this reset is the only signal to spring the offset back.
+    @GestureState private var isDraggingToClose = false
     @State private var showAudioInfo: Bool = false
     @State private var panel: PlayerPanel = .artwork
     @State private var showTrackInfo = false
@@ -120,6 +123,7 @@ struct NowPlayingFullView: View {
             .modifier(PlayerDragOffset(drag: drag))
             .gesture(
                 DragGesture()
+                    .updating($isDraggingToClose) { _, state, _ in state = true }
                     .onChanged { value in
                         if value.translation.height > 0 {
                             drag.offset = value.translation.height
@@ -139,8 +143,22 @@ struct NowPlayingFullView: View {
                         }
                     }
             )
+            .onChange(of: isDraggingToClose) { _, dragging in
+                // Drag ended without onEnded (cancelled): spring back instead of staying stuck.
+                // After a close, isExpanded is already false, so this leaves the close alone.
+                if !dragging && isExpanded && drag.offset != 0 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        drag.offset = 0
+                    }
+                }
+            }
         }
         .ignoresSafeArea()
+        // A stale offset from an interrupted drag must never carry into the next open.
+        .onAppear { drag.offset = 0 }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded { drag.offset = 0 }
+        }
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
         }
