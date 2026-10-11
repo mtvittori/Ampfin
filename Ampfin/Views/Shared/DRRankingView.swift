@@ -30,26 +30,71 @@ struct DRBadge: View {
     }
 }
 
-/// "DR12" for the song playing, next to the audio format, when Settings → "DR nel player" is on and
-/// the song is measured. Its own view, so a new measurement redraws only this label and not the player.
-struct DRPlayerLabel: View {
-    let itemId: String?
-    /// Text before the DR, joined with " · " (the codec on the Mac).
-    var prefix: String? = nil
-    /// Starts with "· ", to follow a summary that is already on screen.
-    var dotted = false
+/// Album DR for the song playing. The tracks of each album are indexed once per library size,
+/// so asking again (a new measurement, a new song) never scans the 9,000 songs.
+@MainActor
+final class DRAlbumIndex {
+    static let shared = DRAlbumIndex()
 
-    @AppStorage(DRSettings.playerBadgeKey) private var enabled = false
+    private var trackIds: [String: [String]] = [:]
+    private var indexedCount = -1
+
+    func albumDR(albumId: String, items: [AudioItem], store: DRStore) -> Int? {
+        if indexedCount != items.count {
+            trackIds = [:]
+            for item in items {
+                if let id = item.AlbumId { trackIds[id, default: []].append(item.Id) }
+            }
+            indexedCount = items.count
+        }
+        return store.albumDR(trackIds: trackIds[albumId] ?? [])
+    }
+}
+
+/// "DR 12" and "Album DR 11" capsules for the song playing, in the color of the DR scale, when
+/// Settings → "DR nel player" is on (the default). Each one is hidden while unmeasured. Its own
+/// view, so a new measurement redraws only these capsules and not the player.
+struct DRPlayerBadges: View {
+    let item: AudioItem
+    /// Shorter text ("Album 11") for the Mac bar.
+    var compact = false
+
+    @AppStorage(DRSettings.playerBadgeKey) private var enabled = true
+    @EnvironmentObject private var viewModel: JellyfinViewModel
     @ObservedObject private var store = DRStore.shared
+    @State private var albumDR: Int?
+
+    /// What the album DR depends on; a change recomputes it.
+    private var albumKey: String {
+        "\(item.AlbumId ?? "")|\(store.results.count)|\(viewModel.audioItems.count)|\(store.results[item.Id]?.value ?? -1)"
+    }
 
     var body: some View {
-        if enabled, let itemId, let result = store.results[itemId] {
-            let text = [prefix, "DR\(result.dr)"].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-            Text(dotted ? "· \(text)" : text)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .accessibilityLabel("Gamma dinamica \(result.dr)")
+        let song = store.results[item.Id]?.dr
+        HStack(spacing: 6) {
+            if enabled, let song { capsule("DR \(song)", dr: song, label: "Gamma dinamica \(song)") }
+            if enabled, let albumDR {
+                capsule(compact ? "Album \(albumDR)" : "Album DR \(albumDR)", dr: albumDR,
+                        label: "Gamma dinamica dell'album \(albumDR)")
+            }
         }
+        .task(id: albumKey) {
+            guard enabled, let albumId = item.AlbumId else { albumDR = nil; return }
+            albumDR = DRAlbumIndex.shared.albumDR(albumId: albumId, items: viewModel.audioItems, store: store)
+        }
+    }
+
+    private func capsule(_ text: String, dr: Int, label: String) -> some View {
+        let color = DRBadge.color(for: dr)
+        return Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.18), in: Capsule())
+            .accessibilityLabel(label)
     }
 }
 
@@ -134,6 +179,9 @@ struct DRRankingView: View {
     @State private var showCompare = false
     @State private var showImporter = false
     @State private var importMessage: String?
+    @State private var showExporter = false
+    @State private var exportFile: DRExportFile?
+    @AppStorage(DRSettings.playerBadgeKey) private var playerBadge = true
 
     /// Song or album ids picked in selection mode (iOS) or in the list (Mac).
     @State private var selection = Set<String>()
@@ -180,7 +228,11 @@ struct DRRankingView: View {
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.json, .commaSeparatedText, .plainText]) { result in
                 importDR(result)
             }
-            .alert("Importa DR", isPresented: Binding(get: { importMessage != nil },
+            .fileExporter(isPresented: $showExporter, document: exportFile, contentType: .json,
+                          defaultFilename: DRExportFile.suggestedName) { result in
+                if case .failure(let error) = result { importMessage = "Esportazione non riuscita: \(error.localizedDescription)" }
+            }
+            .alert("Gamma dinamica", isPresented: Binding(get: { importMessage != nil },
                                                        set: { if !$0 { importMessage = nil } })) {
                 Button("OK") { importMessage = nil }
             } message: {
@@ -328,7 +380,51 @@ struct DRRankingView: View {
         }
     }
 
+    /// Same as Settings' "Esporta DR…": the file is built when the button is tapped.
+    private func exportDR() {
+        guard !store.results.isEmpty else {
+            importMessage = "Non c'è ancora nessun DR da esportare."
+            return
+        }
+        do {
+            exportFile = DRExportFile(data: try store.exportData())
+            showExporter = true
+        } catch {
+            importMessage = "Esportazione non riuscita: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: Layout
+
+    #if os(iOS)
+    /// The page's actions as buttons: compare, import, export, and the player switch. (The Mac
+    /// lays the same buttons out in its header.)
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+                controlButtons
+            }
+            Toggle("DR nel player", isOn: $playerBadge)
+        }
+    }
+    #endif
+
+    @ViewBuilder
+    private var controlButtons: some View {
+        controlButton("Confronta album", systemImage: "chart.bar.xaxis") { showCompare = true }
+        controlButton("Importa DR", systemImage: "square.and.arrow.down") { showImporter = true }
+        controlButton("Esporta DR", systemImage: "square.and.arrow.up") { exportDR() }
+    }
+
+    private func controlButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.glass)
+    }
 
     private var modePicker: some View {
         Picker("Mostra", selection: $mode) {
@@ -360,6 +456,7 @@ struct DRRankingView: View {
         List(selection: $selection) {
             Section {
                 header
+                controls
                 modePicker
             }
             .listRowSeparator(.hidden)
@@ -387,19 +484,6 @@ struct DRRankingView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if editMode.isEditing { analyzeSelectionButton }
-                if !editMode.isEditing {
-                    Menu {
-                        Button { showCompare = true } label: {
-                            Label("Confronta album", systemImage: "chart.bar.xaxis")
-                        }
-                        Button { showImporter = true } label: {
-                            Label("Importa DR…", systemImage: "square.and.arrow.down")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .accessibilityLabel("Altro")
-                }
                 Button(editMode.isEditing ? "Fine" : "Seleziona") {
                     withAnimation {
                         editMode = editMode.isEditing ? .inactive : .active
@@ -462,18 +546,16 @@ struct DRRankingView: View {
                               subtitle: measured == 0 ? nil : "\(measured.formatted()) brani misurati")
                     .padding(.bottom, 16)
                 header
-                HStack(spacing: 10) {
-                    modePicker
-                        .frame(maxWidth: 260)
+                HStack(alignment: .center, spacing: 10) {
+                    controlButtons
                     Spacer(minLength: 8)
-                    Button { showCompare = true } label: {
-                        Label("Confronta album", systemImage: "chart.bar.xaxis")
-                    }
-                    Button { showImporter = true } label: {
-                        Label("Importa DR…", systemImage: "square.and.arrow.down")
-                    }
+                    Toggle("DR nel player", isOn: $playerBadge)
+                        .toggleStyle(.switch)
                 }
-                .padding(.vertical, 14)
+                .padding(.top, 12)
+                modePicker
+                    .frame(maxWidth: 260)
+                    .padding(.vertical, 14)
             }
             .padding(.horizontal, 28)
             .padding(.top, 28)

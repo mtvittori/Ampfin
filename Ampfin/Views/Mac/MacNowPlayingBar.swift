@@ -130,7 +130,11 @@ struct MacPlaybackBar: View {
                 VStack(spacing: 1) {
                     Button { state.showFullPlayer = true } label: {
                         VStack(spacing: 1) {
-                            Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text(item.Name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                DRPlayerBadges(item: item, compact: true)
+                                    .layoutPriority(1)
+                            }
                             Text([viewModel.artistName(for: item), item.Album].compactMap { $0 }.joined(separator: " — "))
                                 .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }

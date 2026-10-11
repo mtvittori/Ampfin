@@ -27,7 +27,7 @@ struct SettingsView: View {
     @AppStorage(JellyfinViewModel.hiResTo48kKey) private var hiResTo48k = true
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var playerShowsModeButtons = false
-    @AppStorage(DRSettings.playerBadgeKey) private var drPlayerBadge = false
+    @AppStorage(DRSettings.playerBadgeKey) private var drPlayerBadge = true
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -524,7 +524,7 @@ struct SettingsView: View {
         } header: {
             Text("Gamma dinamica")
         } footer: {
-            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore compare accanto al formato audio. Puoi importare un file JSON o CSV con id e DR dei brani (anche dagli script sul server).")
+            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore del brano e quello dell'album compaiono nel player. Puoi importare un file JSON o CSV con id e DR dei brani (anche dagli script sul server).")
         }
         .fileImporter(isPresented: $showDRImporter, allowedContentTypes: [.json, .commaSeparatedText, .plainText]) { result in
             importDR(result)

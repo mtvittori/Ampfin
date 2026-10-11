@@ -20,7 +20,7 @@ struct DRResult: Codable, Equatable {
 }
 
 enum DRSettings {
-    /// Settings → show the DR label next to the audio format in the player. Off by default.
+    /// Settings → show the DR badges (song and album) in the player. On by default: every @AppStorage reading it uses `true`.
     static let playerBadgeKey = "drPlayerBadge"
 }
 
