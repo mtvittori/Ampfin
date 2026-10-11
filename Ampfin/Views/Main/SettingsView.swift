@@ -28,6 +28,7 @@ struct SettingsView: View {
     @AppStorage(HeartFlashSettings.storageKey) private var heartFlashOnly = false
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var playerShowsModeButtons = false
     @AppStorage(DRSettings.playerBadgeKey) private var drPlayerBadge = true
+    @AppStorage(DRSettings.badgeStyleKey) private var drBadgeStyle = DRBadgeStyle.colorata
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -507,6 +508,10 @@ struct SettingsView: View {
             }
             #endif
             Toggle("DR nel player", isOn: $drPlayerBadge)
+            Picker("Colore del DR", selection: $drBadgeStyle) {
+                ForEach(DRBadgeStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .disabled(!drPlayerBadge)
 
             Button("Importa DR da file…", systemImage: "square.and.arrow.down") {
                 showDRImporter = true

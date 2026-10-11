@@ -22,6 +22,23 @@ struct DRResult: Codable, Equatable {
 enum DRSettings {
     /// Settings → show the DR badges (song and album) in the player. On by default: every @AppStorage reading it uses `true`.
     static let playerBadgeKey = "drPlayerBadge"
+    /// Settings → colors of the player's DR badges (DRBadgeStyle). "colorata" by default.
+    static let badgeStyleKey = "drBadgeStyle"
+}
+
+/// How the DR badges in the player are drawn.
+enum DRBadgeStyle: String, CaseIterable, Identifiable {
+    case colorata, bianca, nera
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .colorata: "Colorata"
+        case .bianca: "Bianca"
+        case .nera: "Nera"
+        }
+    }
 }
 
 /// Every DR measured so far, keyed by Jellyfin item id. Saved on disk and shared between

@@ -1003,6 +1003,8 @@ class JellyfinViewModel: ObservableObject {
             self?.onIsPlayingChanged?(isPlaying)
         }.store(in: &cancellables)
         playerManager.$currentTime.assign(to: &clock.$time)
+        // The player's DR badges read their values from here; nothing is looked up in the player.
+        DRNowPlaying.shared.bind(to: self)
         
         playerManager.repeatMode = repeatMode
         

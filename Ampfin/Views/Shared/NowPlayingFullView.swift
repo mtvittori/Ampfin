@@ -364,6 +364,14 @@ struct NowPlayingFullView: View {
     /// Thick bar, elapsed and remaining time, the format badge in the middle.
     private var appleScrubber: some View {
         ClockReader(clock: clock) { time in scrubber(at: time) }
+            // Song and album DR under the times, in the gap above the transport so the layout
+            // doesn't move. Outside the ClockReader (it must not re-run with the clock), and
+            // revealed once the slide-in is over.
+            .overlay(alignment: .bottom) {
+                DRPlayerBadges(revealAfter: .milliseconds(650))
+                    .offset(y: 22)
+                    .allowsHitTesting(false)
+            }
     }
 
     private func scrubber(at currentTime: TimeInterval) -> some View {
@@ -406,13 +414,6 @@ struct NowPlayingFullView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Info audio")
             }
-        }
-        // Song and album DR under the times, drawn in the gap above the transport so the
-        // layout doesn't move when a song has no measurement.
-        .overlay(alignment: .bottom) {
-            DRPlayerBadges(item: item)
-                .offset(y: 22)
-                .allowsHitTesting(false)
         }
     }
 
@@ -655,7 +656,7 @@ struct NowPlayingFullView: View {
                 HStack(spacing: 4) {
                     Text(audioInfoSummary(pm: pm))
                         .lineLimit(1)
-                    DRPlayerBadges(item: item)
+                    DRPlayerBadges()
                 }
                 .font(.caption)
                 Spacer(minLength: 0)

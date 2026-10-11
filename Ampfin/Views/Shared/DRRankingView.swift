@@ -30,70 +30,87 @@ struct DRBadge: View {
     }
 }
 
-/// Album DR for the song playing. The tracks of each album are indexed once per library size,
-/// so asking again (a new measurement, a new song) never scans the 9,000 songs.
-@MainActor
-final class DRAlbumIndex {
-    static let shared = DRAlbumIndex()
-
-    private var trackIds: [String: [String]] = [:]
-    private var indexedCount = -1
-
-    func albumDR(albumId: String, items: [AudioItem], store: DRStore) -> Int? {
-        if indexedCount != items.count {
-            trackIds = [:]
-            for item in items {
-                if let id = item.AlbumId { trackIds[id, default: []].append(item.Id) }
-            }
-            indexedCount = items.count
+extension DRBadgeStyle {
+    /// Text color of a player badge.
+    func foreground(dr: Int) -> Color {
+        switch self {
+        case .colorata: DRBadge.color(for: dr)
+        case .bianca: .white
+        case .nera: .black
         }
-        return store.albumDR(trackIds: trackIds[albumId] ?? [])
+    }
+
+    /// Capsule behind it: translucent, dark for white text and light for black text, so both
+    /// stay readable on any cover color (and in light and dark mode).
+    func fill(dr: Int) -> Color {
+        switch self {
+        case .colorata: DRBadge.color(for: dr).opacity(0.18)
+        case .bianca: .black.opacity(0.55)
+        case .nera: .white.opacity(0.75)
+        }
+    }
+
+    /// Hairline that keeps the capsule defined when its fill blends into the background.
+    var outline: Color {
+        switch self {
+        case .colorata: .clear
+        case .bianca: .white.opacity(0.25)
+        case .nera: .black.opacity(0.18)
+        }
     }
 }
 
-/// "DR 12" and "Album DR 11" capsules for the song playing, in the color of the DR scale, when
-/// Settings → "DR nel player" is on (the default). Each one is hidden while unmeasured. Its own
-/// view, so a new measurement redraws only these capsules and not the player.
+/// "DR 12" and "Album DR 11" capsules for the song playing, when Settings → "DR nel player" is
+/// on (the default). The values come ready from DRNowPlaying, so this view looks nothing up,
+/// observes nothing but those two numbers, and takes no part in the player's layout: the
+/// container has a fixed height, and the capsules fade in only after `revealAfter` (the
+/// player's slide-in), never during it.
 struct DRPlayerBadges: View {
-    let item: AudioItem
     /// Shorter text ("Album 11") for the Mac bar.
     var compact = false
+    private let revealAfter: Duration
 
     @AppStorage(DRSettings.playerBadgeKey) private var enabled = true
-    @EnvironmentObject private var viewModel: JellyfinViewModel
-    @ObservedObject private var store = DRStore.shared
-    @State private var albumDR: Int?
+    @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
+    @State private var revealed: Bool
+    private let now = DRNowPlaying.shared
 
-    /// What the album DR depends on; a change recomputes it.
-    private var albumKey: String {
-        "\(item.AlbumId ?? "")|\(store.results.count)|\(viewModel.audioItems.count)|\(store.results[item.Id]?.value ?? -1)"
+    init(compact: Bool = false, revealAfter: Duration = .zero) {
+        self.compact = compact
+        self.revealAfter = revealAfter
+        _revealed = State(initialValue: revealAfter == .zero)
     }
 
     var body: some View {
-        let song = store.results[item.Id]?.dr
+        let visible = enabled && revealed
         HStack(spacing: 6) {
-            if enabled, let song { capsule("DR \(song)", dr: song, label: "Gamma dinamica \(song)") }
-            if enabled, let albumDR {
-                capsule(compact ? "Album \(albumDR)" : "Album DR \(albumDR)", dr: albumDR,
-                        label: "Gamma dinamica dell'album \(albumDR)")
+            if let song = now.songDR { capsule("DR \(song)", dr: song, label: "Gamma dinamica \(song)") }
+            if let album = now.albumDR {
+                capsule(compact ? "Album \(album)" : "Album DR \(album)", dr: album,
+                        label: "Gamma dinamica dell'album \(album)")
             }
         }
-        .task(id: albumKey) {
-            guard enabled, let albumId = item.AlbumId else { albumDR = nil; return }
-            albumDR = DRAlbumIndex.shared.albumDR(albumId: albumId, items: viewModel.audioItems, store: store)
+        .frame(height: enabled && !compact ? 18 : nil)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.25), value: revealed)
+        .accessibilityHidden(!visible)
+        .task {
+            guard !revealed else { return }
+            try? await Task.sleep(for: revealAfter)
+            revealed = true
         }
     }
 
     private func capsule(_ text: String, dr: Int, label: String) -> some View {
-        let color = DRBadge.color(for: dr)
-        return Text(text)
+        Text(text)
             .font(.system(size: 11, weight: .semibold))
             .monospacedDigit()
-            .foregroundStyle(color)
+            .foregroundStyle(style.foreground(dr: dr))
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
+            .background(style.fill(dr: dr), in: Capsule())
+            .overlay(Capsule().strokeBorder(style.outline, lineWidth: 0.5))
             .accessibilityLabel(label)
     }
 }
@@ -182,6 +199,7 @@ struct DRRankingView: View {
     @State private var showExporter = false
     @State private var exportFile: DRExportFile?
     @AppStorage(DRSettings.playerBadgeKey) private var playerBadge = true
+    @AppStorage(DRSettings.badgeStyleKey) private var badgeStyle = DRBadgeStyle.colorata
 
     /// Song or album ids picked in selection mode (iOS) or in the list (Mac).
     @State private var selection = Set<String>()
@@ -405,6 +423,7 @@ struct DRRankingView: View {
                 controlButtons
             }
             Toggle("DR nel player", isOn: $playerBadge)
+            badgeStylePicker
         }
     }
     #endif
@@ -414,6 +433,13 @@ struct DRRankingView: View {
         controlButton("Confronta album", systemImage: "chart.bar.xaxis") { showCompare = true }
         controlButton("Importa DR", systemImage: "square.and.arrow.down") { showImporter = true }
         controlButton("Esporta DR", systemImage: "square.and.arrow.up") { exportDR() }
+    }
+
+    private var badgeStylePicker: some View {
+        Picker("Colore", selection: $badgeStyle) {
+            ForEach(DRBadgeStyle.allCases) { Text($0.title).tag($0) }
+        }
+        .disabled(!playerBadge)
     }
 
     private func controlButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -551,6 +577,8 @@ struct DRRankingView: View {
                     Spacer(minLength: 8)
                     Toggle("DR nel player", isOn: $playerBadge)
                         .toggleStyle(.switch)
+                    badgeStylePicker
+                        .frame(maxWidth: 190)
                 }
                 .padding(.top, 12)
                 modePicker
