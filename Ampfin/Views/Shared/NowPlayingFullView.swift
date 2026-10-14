@@ -89,6 +89,8 @@ struct NowPlayingFullView: View {
     /// Debug option (Settings → Gamma dinamica): the pill shows no DR until this delay after the player appeared.
     @AppStorage(DRSettings.revealDelayKey) private var drRevealDelay = 0.0
     @State private var drRevealed = false
+    /// Below this delay the reveal can land while the open slide still runs: no animation then.
+    private static let drRevealAnimationMinDelay = 0.6
     @State private var heartFlashTask: Task<Void, Never>?
     #if os(iOS)
     @ObservedObject private var systemVolume = SystemVolume.shared
@@ -176,7 +178,14 @@ struct NowPlayingFullView: View {
             // Closing already: the slide-out must not get a change of its own.
             guard isExpanded else { return }
             var t = Transaction()
-            t.disablesAnimations = true
+            // Animate only once the open slide is surely over (and no drag is running): a reveal
+            // that lands mid-slide stays instant, like before, so it cannot fight the slide.
+            if drRevealDelay >= Self.drRevealAnimationMinDelay, drag.offset == 0, !isDraggingToClose {
+                t.animation = reduceMotion ? .easeInOut(duration: 0.2) : .smooth(duration: 0.4)
+                t.drReveal = true
+            } else {
+                t.disablesAnimations = true
+            }
             withTransaction(t) { drRevealed = true }
         }
         .task(id: item.AlbumId ?? item.id) {
@@ -1270,6 +1279,7 @@ private struct PlayerInfoPill: View {
 
     @AppStorage(DRSettings.playerBadgeKey) private var drEnabled = true
     @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let now = DRNowPlaying.shared
 
     private var drText: Text? {
@@ -1298,7 +1308,10 @@ private struct PlayerInfoPill: View {
 
                 VStack(spacing: 1) {
                     formatText
-                    if let dr { dr.foregroundStyle(color.opacity(0.85)) }
+                    if let dr {
+                        dr.foregroundStyle(color.opacity(0.85))
+                            .transition(revealTransition(dx: 0))
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 3)
@@ -1309,8 +1322,9 @@ private struct PlayerInfoPill: View {
             .foregroundStyle(color.opacity(0.85))
             // Fixed height for the one-line variant: a late switch to two lines must not shift the rows below.
             .frame(minHeight: 18)
-            // Content changes (text, width, variant) apply at once; only the parent slide animates the pill.
-            .transaction { $0.animation = nil }
+            // Content changes (text, width, variant) apply at once; only the parent slide animates the
+            // pill, and the DR reveal, which carries its own flag in the transaction.
+            .transaction { if !$0.drReveal { $0.animation = nil } }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Info audio")
@@ -1322,14 +1336,50 @@ private struct PlayerInfoPill: View {
         HStack(spacing: 7) {
             formatText
             if let dr {
-                Rectangle().fill(color.opacity(0.3)).frame(width: 1, height: 11)
-                dr.fontWeight(.semibold).monospacedDigit()
+                // One transition for the divider and the DR together.
+                HStack(spacing: 7) {
+                    Rectangle().fill(color.opacity(0.3)).frame(width: 1, height: 11)
+                    dr.fontWeight(.semibold).monospacedDigit()
+                }
+                .transition(revealTransition(dx: -8))
             }
         }
     }
 
+    /// Only the debug reveal animates (its transaction has `drReveal`): the DR comes in from the
+    /// format side, blur to sharp. Reduce Motion: plain fade. Removal is instant.
+    private func revealTransition(dx: CGFloat) -> AnyTransition {
+        reduceMotion ? .opacity : .asymmetric(insertion: .modifier(active: DRRevealEffect(dx: dx), identity: DRRevealEffect(dx: 0, active: false)),
+                                              removal: .identity)
+    }
+
     private var pillShape: some View {
         RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color.opacity(0.15))
+    }
+}
+
+/// Marks the transaction of the delayed DR reveal, so the pill lets that one animate.
+private struct DRRevealKey: TransactionKey {
+    static let defaultValue = false
+}
+
+private extension Transaction {
+    var drReveal: Bool {
+        get { self[DRRevealKey.self] }
+        set { self[DRRevealKey.self] = newValue }
+    }
+}
+
+/// Start state of the DR reveal: invisible, blurred, shifted towards the format.
+private struct DRRevealEffect: ViewModifier {
+    let dx: CGFloat
+    var active = true
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(active ? 0 : 1)
+            .blur(radius: active ? 6 : 0)
+            .offset(x: dx)
     }
 }
 
