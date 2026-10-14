@@ -42,6 +42,12 @@ extension PlatformImage {
     /// Samples a grid of pixels, converts to HSB, and picks the most saturated color
     /// with enough brightness to look good as a glass tint.
     func averageColor() -> Color? {
+        vividColors()?.primary
+    }
+
+    /// The cover's most vibrant color (primary) and the most vibrant one of a clearly
+    /// different hue (secondary, nil when the cover has a single hue).
+    func vividColors() -> (primary: Color, secondary: Color?)? {
         guard let cgImage = self.cgImage else { return nil }
 
         // Scale down to 16x16 for sampling
@@ -110,24 +116,41 @@ extension PlatformImage {
         // Filter out near-gray (low saturation) and very dark/bright pixels
         let vibrant = candidates.filter { $0.saturation > 0.2 && $0.brightness > 0.15 && $0.brightness < 0.95 }
 
+        // Boost saturation slightly for a more vivid tint
+        func boosted(_ pixel: PixelHSB) -> Color {
+            Color(hue: pixel.hue, saturation: min(pixel.saturation * 1.2, 1.0),
+                  brightness: max(min(pixel.brightness, 0.85), 0.4))
+        }
+
         if let best = vibrant.max(by: { $0.vibrancy < $1.vibrancy }) {
-            // Boost saturation slightly for a more vivid tint
-            let boostedS = min(best.saturation * 1.2, 1.0)
-            let boostedB = max(min(best.brightness, 0.85), 0.4)
-            return Color(hue: best.hue, saturation: boostedS, brightness: boostedB)
+            // Secondary: the strongest hue family (12 bins, scored by total vibrancy, so a
+            // stray pixel doesn't win) away from the primary's, then its most vibrant pixel.
+            let bins = 12
+            func bin(_ hue: Double) -> Int { min(Int(hue * Double(bins)), bins - 1) }
+            func distance(_ a: Int, _ b: Int) -> Int { let d = abs(a - b); return min(d, bins - d) }
+            let primaryBin = bin(best.hue)
+            var scores = [Double](repeating: 0, count: bins)
+            for pixel in vibrant { scores[bin(pixel.hue)] += pixel.vibrancy }
+            let secondaryBin = (0..<bins)
+                .filter { distance($0, primaryBin) > 1 && scores[$0] > 0 }
+                .max { scores[$0] < scores[$1] }
+            let secondary = secondaryBin.flatMap { target in
+                vibrant.filter { bin($0.hue) == target }.max { $0.vibrancy < $1.vibrancy }
+            }
+            return (boosted(best), secondary.map(boosted))
         }
 
         // Fallback: if no vibrant pixel, use the brightest one with any saturation
         let fallback = candidates.filter { $0.saturation > 0.05 }.max(by: { $0.vibrancy < $1.vibrancy })
         if let fb = fallback {
-            return Color(hue: fb.hue, saturation: min(fb.saturation * 1.5, 1.0), brightness: max(min(fb.brightness, 0.85), 0.4))
+            return (Color(hue: fb.hue, saturation: min(fb.saturation * 1.5, 1.0), brightness: max(min(fb.brightness, 0.85), 0.4)), nil)
         }
 
         // Last resort: plain average
         let avgR = candidates.reduce(0.0) { $0 + $1.r } / Double(totalPixels)
         let avgG = candidates.reduce(0.0) { $0 + $1.g } / Double(totalPixels)
         let avgB = candidates.reduce(0.0) { $0 + $1.b } / Double(totalPixels)
-        return Color(red: avgR, green: avgG, blue: avgB)
+        return (Color(red: avgR, green: avgG, blue: avgB), nil)
     }
 
     #if os(macOS)

@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// Which of the playing cover's colors the accent takes.
+enum ArtworkAccentChoice: String, CaseIterable, Identifiable {
+    case primary, secondary
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .primary: "Primario"
+        case .secondary: "Secondario"
+        }
+    }
+}
+
 /// Manages the user-selected accent color, persisted in UserDefaults.
 class AccentColorManager: ObservableObject {
     static let shared = AccentColorManager()
@@ -12,6 +24,8 @@ class AccentColorManager: ObservableObject {
     private static let glassTintIntensityKey = "glassTintIntensity"
     private static let nowPlayingBlurKey = "nowPlayingBlurredBackground"
     private static let followsArtworkKey = "accentFollowsArtwork"
+    static let lightArtworkChoiceKey = "accentArtworkLight"
+    static let darkArtworkChoiceKey = "accentArtworkDark"
 
     @Published var accentColor: Color {
         didSet { save() }
@@ -52,8 +66,39 @@ class AccentColorManager: ObservableObject {
         }
     }
 
-    /// Vivid color of the playing album's cover, set by ContentView; nil before anything plays.
-    @Published var artworkAccent: Color?
+    /// Which cover color the accent takes in Light Mode.
+    @Published var lightArtworkChoice: ArtworkAccentChoice {
+        didSet { UserDefaults.standard.set(lightArtworkChoice.rawValue, forKey: Self.lightArtworkChoiceKey) }
+    }
+
+    /// Which cover color the accent takes in Dark Mode.
+    @Published var darkArtworkChoice: ArtworkAccentChoice {
+        didSet { UserDefaults.standard.set(darkArtworkChoice.rawValue, forKey: Self.darkArtworkChoiceKey) }
+    }
+
+    /// Vivid colors of the playing album's cover, set by ContentView; nil before anything plays.
+    /// The secondary is the primary again when the cover has a single hue.
+    @Published var artworkColors: (primary: Color, secondary: Color)?
+
+    func artworkColor(_ choice: ArtworkAccentChoice) -> Color? {
+        guard let artworkColors else { return nil }
+        return choice == .primary ? artworkColors.primary : artworkColors.secondary
+    }
+
+    /// The playing cover's accent: a dynamic color that follows Light/Dark Mode.
+    var artworkAccent: Color? {
+        guard let light = artworkColor(lightArtworkChoice),
+              let dark = artworkColor(darkArtworkChoice) else { return nil }
+        #if os(macOS)
+        let lightColor = NSColor(light), darkColor = NSColor(dark)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkColor : lightColor
+        })
+        #else
+        let lightColor = UIColor(light), darkColor = UIColor(dark)
+        return Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? darkColor : lightColor })
+        #endif
+    }
 
     /// The app-wide tint: the playing album's color, the chosen color, or the system default (nil).
     var effectiveTint: Color? {
@@ -64,6 +109,10 @@ class AccentColorManager: ObservableObject {
 
     init() {
         self.followsArtwork = UserDefaults.standard.bool(forKey: Self.followsArtworkKey)
+        self.lightArtworkChoice = UserDefaults.standard.string(forKey: Self.lightArtworkChoiceKey)
+            .flatMap(ArtworkAccentChoice.init(rawValue:)) ?? .primary
+        self.darkArtworkChoice = UserDefaults.standard.string(forKey: Self.darkArtworkChoiceKey)
+            .flatMap(ArtworkAccentChoice.init(rawValue:)) ?? .primary
         // Glass tint defaults to ON for first launch
         if UserDefaults.standard.object(forKey: Self.glassTintKey) == nil {
             self.glassTintEnabled = true
@@ -98,6 +147,8 @@ class AccentColorManager: ObservableObject {
     func reload() {
         let fresh = AccentColorManager()
         followsArtwork = fresh.followsArtwork
+        lightArtworkChoice = fresh.lightArtworkChoice
+        darkArtworkChoice = fresh.darkArtworkChoice
         glassTintEnabled = fresh.glassTintEnabled
         glassTintIntensity = fresh.glassTintIntensity
         nowPlayingBlurredBackground = fresh.nowPlayingBlurredBackground

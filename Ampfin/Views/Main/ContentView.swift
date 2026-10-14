@@ -105,10 +105,11 @@ struct ContentView: View {
         guard let item = viewModel.currentlyPlayingItem,
               let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 300),
               let image = await ImageLoader.shared.firstImage(from: [url]),
-              let color = image.averageColor() else { return }
+              let colors = image.vividColors() else { return }
         // No animation: an animated tint redraws the whole app on every frame, and it
         // ran exactly while the album page morphed its buttons, making them stutter.
-        colorManager.artworkAccent = color.legibleAccent()
+        let primary = colors.primary.legibleAccent()
+        colorManager.artworkColors = (primary, colors.secondary?.legibleAccent() ?? primary)
     }
 
     @ViewBuilder

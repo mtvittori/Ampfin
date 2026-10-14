@@ -16,7 +16,7 @@ final class SettingsBackup: ObservableObject {
     /// merges. Not the login (server, token, user) and not the caches.
     static let keys: [String] = [
         "accentColor_red", "accentColor_green", "accentColor_blue", "accentColor_hasCustom",
-        "accentFollowsArtwork", "glassTintEnabled", "glassTintIntensity",
+        "accentFollowsArtwork", AccentColorManager.lightArtworkChoiceKey, AccentColorManager.darkArtworkChoiceKey, "glassTintEnabled", "glassTintIntensity",
         "nowPlayingBlurredBackground", "albumColorBackground", AlbumBackdropQuality.storageKey, HeartFlashSettings.storageKey, PlayerModeButtonsSettings.storageKey, "topBarStyle", "mixSource", "mixesInTopPicks", "scrobbleStatsOnHome", "homeSubtitleStyle", "letterIndexStyle", "landscapeCoverFlow", "coverFlowResumesPlaying", "heroCoverBelowIsland", "albumsSort", "tracksSort", "favoriteTracksSort",
         "jellyfin_favorite_albums", "jellyfin_favorite_tracks", "jellyfin_favorite_playlists",
         "stream_quality_wifi", "stream_quality_cellular", "hiResTo48k", "library_refresh_interval",

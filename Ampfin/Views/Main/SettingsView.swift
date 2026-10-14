@@ -207,6 +207,11 @@ struct SettingsView: View {
                 }
             }
 
+            if colorManager.followsArtwork {
+                artworkChoiceRow("Tema chiaro", systemImage: "sun.max.fill", selection: $colorManager.lightArtworkChoice)
+                artworkChoiceRow("Tema scuro", systemImage: "moon.fill", selection: $colorManager.darkArtworkChoice)
+            }
+
             // Preset grid
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 44))], spacing: 12) {
                 ForEach(presetColors, id: \.0) { name, color in
@@ -249,7 +254,29 @@ struct SettingsView: View {
         } header: {
             Text("Colore Accent")
         } footer: {
-            Text("Scegli il colore principale dell'interfaccia dell'app. Con \"Colore dell'album in ascolto\" l'app prende il colore più vivo della copertina che sta suonando e cambia a ogni album.")
+            Text("Scegli il colore principale dell'interfaccia dell'app. Con \"Colore dell'album in ascolto\" l'app prende un colore della copertina che sta suonando e cambia a ogni album: il primario è il più vivo, il secondario il più forte di un'altra tinta (uguale al primario se la copertina ha una tinta sola). Puoi sceglierne uno per il tema chiaro e uno per il tema scuro.")
+        }
+    }
+
+    /// One theme's choice between the cover's two colors, each segment showing its swatch.
+    private func artworkChoiceRow(_ title: String, systemImage: String, selection: Binding<ArtworkAccentChoice>) -> some View {
+        HStack(spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Picker(title, selection: selection) {
+                ForEach(ArtworkAccentChoice.allCases) { choice in
+                    Text(choice.label).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            Circle()
+                .fill(colorManager.artworkColor(selection.wrappedValue).map { AnyShapeStyle($0) } ?? AnyShapeStyle(.quaternary))
+                .frame(width: 22, height: 22)
+                .overlay { Circle().strokeBorder(.primary.opacity(0.12)) }
+                .accessibilityHidden(true)
         }
     }
 
