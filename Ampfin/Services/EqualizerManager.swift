@@ -164,6 +164,14 @@ final class EqualizerManager: ObservableObject {
         audioEngine.stop()
     }
 
+    /// Paused, not stopped: the graph and the queued song stay, and start() goes on from
+    /// here. On iOS the lock screen reads play/pause from whether the app is making sound:
+    /// an engine left running while paused kept the pause button there and play was lost.
+    func pauseEngine() {
+        guard audioEngine.isRunning else { return }
+        audioEngine.pause()
+    }
+
     // MARK: - Apply
 
     private func applyGains() {

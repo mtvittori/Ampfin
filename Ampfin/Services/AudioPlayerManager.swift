@@ -618,6 +618,7 @@ final class AudioPlayerManager: ObservableObject {
         // screen and the Dynamic Island must still say paused.
         guard currentlyPlayingItem != nil else { return }
         playerNode.pause()
+        eqManager.pauseEngine()
         isPlaying = false
         stopTimeUpdater()
         updateNowPlayingInfo()
@@ -745,6 +746,7 @@ final class AudioPlayerManager: ObservableObject {
         isQueued = true
         // Moving the position while paused stays paused, as in Apple Music.
         guard wantsToPlay else {
+            eqManager.pauseEngine()
             currentTime = time
             updateNowPlayingInfo()
             return
