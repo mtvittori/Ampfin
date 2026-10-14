@@ -86,6 +86,9 @@ struct NowPlayingFullView: View {
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var showsModeButtons = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var heartFlash = false
+    /// Debug option (Settings → Gamma dinamica): the pill shows no DR until this delay after the player appeared.
+    @AppStorage(DRSettings.revealDelayKey) private var drRevealDelay = 0.0
+    @State private var drRevealed = false
     @State private var heartFlashTask: Task<Void, Never>?
     #if os(iOS)
     @ObservedObject private var systemVolume = SystemVolume.shared
@@ -160,6 +163,21 @@ struct NowPlayingFullView: View {
         }
         .task(id: artworkURL) {
             await loadAverageColor(url: artworkURL)
+        }
+        // Once per presentation (the view is new at each open). Not tied to the song: the lag under
+        // test is the open slide. A cancelled task must not reveal, so no `try?` here.
+        .task {
+            guard drRevealDelay > 0 else { return }
+            do {
+                try await Task.sleep(for: .seconds(drRevealDelay))
+            } catch {
+                return
+            }
+            // Closing already: the slide-out must not get a change of its own.
+            guard isExpanded else { return }
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { drRevealed = true }
         }
         .task(id: item.AlbumId ?? item.id) {
             guard let url = viewModel.artworkURL(for: item.AlbumId ?? item.id, size: 1200),
@@ -430,7 +448,7 @@ struct NowPlayingFullView: View {
                 Text(formatTime(shown))
                     .lineLimit(1).minimumScaleFactor(0.8)
                     .frame(width: 44, alignment: .leading)
-                PlayerInfoPill(quality: qualityText, color: fg) {
+                PlayerInfoPill(quality: qualityText, color: fg, showsDR: drRevealDelay <= 0 || drRevealed) {
                     viewModel.playerManager.refreshAudioOutputInfo()
                     showAudioInfo = true
                 }
@@ -1246,14 +1264,16 @@ private struct PlayerModeButton: View {
 private struct PlayerInfoPill: View {
     let quality: String
     let color: Color
+    /// False during the debug reveal delay: the DR is not even read, the pill is just the format.
+    let showsDR: Bool
     let action: () -> Void
 
-    @AppStorage(DRSettings.playerBadgeKey) private var showsDR = true
+    @AppStorage(DRSettings.playerBadgeKey) private var drEnabled = true
     @AppStorage(DRSettings.badgeStyleKey) private var style = DRBadgeStyle.colorata
     private let now = DRNowPlaying.shared
 
     private var drText: Text? {
-        guard showsDR else { return nil }
+        guard showsDR, drEnabled else { return nil }
         return DRPlayerLine.text(song: now.songDR, album: now.albumDR, style: style, albumLabel: "Album")
     }
 

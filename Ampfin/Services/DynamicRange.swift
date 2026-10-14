@@ -24,6 +24,8 @@ enum DRSettings {
     static let playerBadgeKey = "drPlayerBadge"
     /// Settings → colors of the player's DR badges (DRBadgeStyle). "colorata" by default.
     static let badgeStyleKey = "drBadgeStyle"
+    /// Debug option: seconds the full player waits, after appearing, before showing its DR (0 = at once).
+    static let revealDelayKey = "drPlayerRevealDelay"
 }
 
 /// How the DR badges in the player are drawn.

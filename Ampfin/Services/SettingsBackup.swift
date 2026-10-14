@@ -22,7 +22,7 @@ final class SettingsBackup: ObservableObject {
         "stream_quality_wifi", "stream_quality_cellular", "hiResTo48k", "library_refresh_interval",
         "eq_enabled", "eq_preset", "eq_bandGains",
         ArtistMergeStore.autoMergeKey, ArtistMergeStore.splitCreditsKey, ArtistMergeStore.manualMergesKey,
-        MusicLibrarySelection.storageKey, DRSettings.playerBadgeKey, DRSettings.badgeStyleKey,
+        MusicLibrarySelection.storageKey, DRSettings.playerBadgeKey, DRSettings.badgeStyleKey, DRSettings.revealDelayKey,
         SongCacheSettings.limitKey, SongCacheSettings.windowKey, SongCacheSettings.minPlaysKey,
     ]
 

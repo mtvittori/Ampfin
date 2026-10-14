@@ -33,6 +33,7 @@ struct SettingsView: View {
     @AppStorage(PlayerModeButtonsSettings.storageKey) private var playerShowsModeButtons = false
     @AppStorage(DRSettings.playerBadgeKey) private var drPlayerBadge = true
     @AppStorage(DRSettings.badgeStyleKey) private var drBadgeStyle = DRBadgeStyle.colorata
+    @AppStorage(DRSettings.revealDelayKey) private var drRevealDelay = 0.0
     @State private var exportFile: SettingsBackupFile?
     @State private var showExporter = false
     @State private var showImporter = false
@@ -517,6 +518,13 @@ struct SettingsView: View {
             }
             .disabled(!drPlayerBadge)
 
+            if drPlayerBadge {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ritardo DR nel player (debug): \(drRevealDelay.formatted(.number.precision(.fractionLength(1)))) s")
+                    Slider(value: $drRevealDelay, in: 0...2, step: 0.1)
+                }
+            }
+
             Button("Importa DR da file…", systemImage: "square.and.arrow.down") {
                 showDRImporter = true
             }
@@ -533,7 +541,7 @@ struct SettingsView: View {
         } header: {
             Text("Gamma dinamica")
         } footer: {
-            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore del brano e quello dell'album compaiono nel player. Puoi importare un file JSON o CSV con id e DR dei brani (anche dagli script sul server).")
+            Text("Il DR misura quanto è dinamico un brano, come il DR Meter di foobar2000: più è alto, meno è compresso. Con DR nel player, il valore del brano e quello dell'album compaiono nel player. Puoi importare un file JSON o CSV con id e DR dei brani (anche dagli script sul server).\n\nIl ritardo è un'opzione di prova: mostra il DR nel player solo dopo l'apertura, per verificare se così sparisce lo scatto all'apertura. 0 = subito.")
         }
         .fileImporter(isPresented: $showDRImporter, allowedContentTypes: [.json, .commaSeparatedText, .plainText]) { result in
             importDR(result)
