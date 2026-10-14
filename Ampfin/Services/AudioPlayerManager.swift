@@ -128,6 +128,7 @@ final class AudioPlayerManager: ObservableObject {
         eqManager.audioEngine.mainMixerNode.outputVolume = volume
         configureAudioSessionIfNeeded()
         setupRemoteCommandCenter()
+        AudioStreamCache.shared.trimSoon()
         // A new output (CarPlay, Bluetooth) stops the engine: start it again if a song was on.
         // Not during a call: answering in CarPlay changes the output too, and the music
         // started again over the call.
@@ -238,6 +239,8 @@ final class AudioPlayerManager: ObservableObject {
         let cache = AudioStreamCache.shared
         let key = cache.key(itemId: item.Id, url: url)
         cache.lowerPriority(exceptKey: key)
+        // One listen per play request, cached or not (prefetch and the DR scan don't count).
+        cache.recordPlay(forKey: key)
         isLoading = true
         cache.fetch(url, key: key, urgent: true) { [weak self] file in
             // Superseded by a newer play request or by stop: the cache keeps the file, nothing plays.

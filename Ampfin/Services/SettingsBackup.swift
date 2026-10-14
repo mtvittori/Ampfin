@@ -23,6 +23,7 @@ final class SettingsBackup: ObservableObject {
         "eq_enabled", "eq_preset", "eq_bandGains",
         ArtistMergeStore.autoMergeKey, ArtistMergeStore.splitCreditsKey, ArtistMergeStore.manualMergesKey,
         MusicLibrarySelection.storageKey, DRSettings.playerBadgeKey, DRSettings.badgeStyleKey,
+        SongCacheSettings.limitKey, SongCacheSettings.windowKey, SongCacheSettings.minPlaysKey,
     ]
 
     private static let lastServerBackupKey = "settingsBackup_lastServerDate"

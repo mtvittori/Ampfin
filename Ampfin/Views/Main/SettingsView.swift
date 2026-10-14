@@ -10,6 +10,10 @@ struct SettingsView: View {
     @State private var cacheSize: Int64 = 0
     @State private var libraryCacheSize: Int64 = 0
     @State private var songCacheSize: Int64 = 0
+    @State private var songCacheCount = 0
+    @AppStorage(SongCacheSettings.limitKey) private var songCacheLimitGB = SongCacheSettings.defaultLimitGB
+    @AppStorage(SongCacheSettings.windowKey) private var songCacheWindowDays = SongCacheSettings.defaultWindowDays
+    @AppStorage(SongCacheSettings.minPlaysKey) private var songCacheMinPlays = SongCacheSettings.defaultMinPlays
     @ObservedObject private var backup = SettingsBackup.shared
     @State private var musicLibraries: [LibraryView] = []
     @State private var disabledLibraries: Set<String> = []
@@ -698,8 +702,22 @@ struct SettingsView: View {
             HStack {
                 Label("Cache brani", systemImage: "music.note.list")
                 Spacer()
-                Text(formatBytes(songCacheSize))
+                Text("\(formatBytes(songCacheSize)) · \(songCacheCount) brani")
                     .foregroundColor(.secondary)
+            }
+
+            Picker("Spazio massimo", selection: $songCacheLimitGB) {
+                ForEach(SongCacheSettings.limitChoices, id: \.self) { Text("\($0) GB").tag($0) }
+            }
+
+            Picker("Periodo", selection: $songCacheWindowDays) {
+                ForEach(SongCacheSettings.windowChoices, id: \.self) {
+                    Text(SongCacheSettings.windowLabel($0)).tag($0)
+                }
+            }
+
+            if songCacheWindowDays > 0 {
+                Stepper("Ascolti minimi nel periodo: \(songCacheMinPlays)", value: $songCacheMinPlays, in: 1...10)
             }
 
             Button("Svuota cache brani", role: .destructive) {
@@ -712,8 +730,11 @@ struct SettingsView: View {
         } header: {
             Text("Cache")
         } footer: {
-            Text("La cache immagini viene ricreata automaticamente durante l'uso. La cache brani tiene gli ultimi brani ascoltati (fino a 2 GB) e scarica in anticipo il prossimo della coda, così partono subito.")
+            Text("La cache immagini viene ricreata automaticamente durante l'uso. La cache brani tiene i brani che ascolti di più. Un brano in cache da più del periodo scelto viene tolto se nel periodo l'hai ascoltato meno delle volte indicate; se lo spazio finisce, escono prima i meno ascoltati. Il prossimo brano della coda viene scaricato in anticipo.")
         }
+        .onChange(of: songCacheLimitGB) { applySongCacheSettings() }
+        .onChange(of: songCacheWindowDays) { applySongCacheSettings() }
+        .onChange(of: songCacheMinPlays) { applySongCacheSettings() }
     }
 
     @ViewBuilder private var backupSection: some View {
@@ -909,7 +930,18 @@ struct SettingsView: View {
         downloadSize = downloadManager.totalDownloadSize()
         cacheSize = ImageCacheService.shared.diskSize()
         libraryCacheSize = LibraryCacheService.shared.diskSize()
-        songCacheSize = AudioStreamCache.shared.size()
+        let songs = AudioStreamCache.shared.usage()
+        songCacheSize = songs.bytes
+        songCacheCount = songs.count
+    }
+
+    /// New retention settings take effect right away, not at the next download.
+    private func applySongCacheSettings() {
+        AudioStreamCache.shared.settingsChanged()
+        Task {
+            try? await Task.sleep(for: .milliseconds(2500))
+            refreshSizes()
+        }
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
