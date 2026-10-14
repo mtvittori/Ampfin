@@ -398,6 +398,8 @@ private struct IOSToolbarModifier: ViewModifier {
     var title: String? = nil
     var subtitle: String? = nil
     var onSubtitleTap: (() -> Void)? = nil
+    /// The Home shows your Jellyfin picture next to the buttons; it opens your listening profile.
+    var showsProfile = false
     @ObservedObject private var colorManager = AccentColorManager.shared
 
     // Same size as iOS 26's own toolbar groups: 44 pt tall, a 48 pt slot per icon.
@@ -420,7 +422,8 @@ private struct IOSToolbarModifier: ViewModifier {
                 .navigationTitle(title ?? "amplifin")
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaBar(edge: .top) {
-                    AmpfinTopBar(viewModel: viewModel, title: title ?? "amplifin", subtitle: subtitle, onSubtitleTap: onSubtitleTap)
+                    AmpfinTopBar(viewModel: viewModel, title: title ?? "amplifin", subtitle: subtitle,
+                                 onSubtitleTap: onSubtitleTap, showsProfile: showsProfile)
                 }
         } else {
             systemBar(content)
@@ -440,6 +443,15 @@ private struct IOSToolbarModifier: ViewModifier {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 2) {
+                        if showsProfile {
+                            NavigationLink(destination: ScrobbleStatsPage().environmentObject(viewModel)) {
+                                ProfileAvatar(viewModel: viewModel, size: 32)
+                                    .frame(width: 48, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Profilo")
+                        }
+
                         NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
                             toolbarIcon("heart.fill")
                         }
@@ -467,6 +479,7 @@ private struct AmpfinTopBar: View {
     let subtitle: String?
     /// A tap on the subtitle (the Home cycles its messages); the system bar can't take one.
     var onSubtitleTap: (() -> Void)? = nil
+    var showsProfile = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -488,6 +501,14 @@ private struct AmpfinTopBar: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 4) {
+                if showsProfile {
+                    NavigationLink(destination: ScrobbleStatsPage().environmentObject(viewModel)) {
+                        ProfileAvatar(viewModel: viewModel, size: 38)
+                            .frame(width: 54, height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Profilo")
+                }
                 NavigationLink(destination: FavoritesView().environmentObject(viewModel)) {
                     icon("heart.fill")
                 }
@@ -515,6 +536,26 @@ private struct AmpfinTopBar: View {
     }
 }
 
+/// Your Jellyfin profile picture in a circle; the person symbol until it loads, or when you have none.
+private struct ProfileAvatar: View {
+    @ObservedObject var viewModel: JellyfinViewModel
+    let size: CGFloat
+
+    var body: some View {
+        CachedAsyncImage(url: viewModel.userImageURL(), targetSize: size) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            Image(systemName: "person.crop.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+    }
+}
+
 private struct OptionalSubtitle: ViewModifier {
     let text: String?
 
@@ -529,8 +570,9 @@ private struct OptionalSubtitle: ViewModifier {
 
 extension View {
     func iOSToolbar(viewModel: JellyfinViewModel, title: String? = nil, subtitle: String? = nil,
-                    onSubtitleTap: (() -> Void)? = nil) -> some View {
-        modifier(IOSToolbarModifier(viewModel: viewModel, title: title, subtitle: subtitle, onSubtitleTap: onSubtitleTap))
+                    onSubtitleTap: (() -> Void)? = nil, showsProfile: Bool = false) -> some View {
+        modifier(IOSToolbarModifier(viewModel: viewModel, title: title, subtitle: subtitle,
+                                    onSubtitleTap: onSubtitleTap, showsProfile: showsProfile))
     }
 }
 

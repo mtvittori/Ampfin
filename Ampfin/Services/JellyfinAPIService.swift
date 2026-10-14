@@ -464,6 +464,11 @@ class JellyfinAPIService {
         return URL(string: "\(serverUrl)/Items/\(itemId)/Images/\(type)?maxWidth=\(maxWidth)&quality=85&api_key=\(token)")
     }
 
+    /// The signed-in user's profile picture (404 when the user has none).
+    func userImageURL(size: Int) -> URL? {
+        return URL(string: "\(serverUrl)/Users/\(userId)/Images/Primary?maxWidth=\(size)&maxHeight=\(size)&quality=90&api_key=\(token)")
+    }
+
     func streamURL(for itemId: String) -> URL? {
         return URL(string: "\(serverUrl)/Audio/\(itemId)/stream?static=true&api_key=\(token)")
     }

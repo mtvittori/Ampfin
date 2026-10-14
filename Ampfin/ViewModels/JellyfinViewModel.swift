@@ -747,6 +747,10 @@ class JellyfinViewModel: ObservableObject {
         return apiService?.artworkURL(for: itemId, size: size)
     }
 
+    func userImageURL(size: Int = 120) -> URL? {
+        return apiService?.userImageURL(size: size)
+    }
+
     // MARK: - Changing a cover
 
     /// Bumped after a cover change, so every view rebuilds its artwork URLs.

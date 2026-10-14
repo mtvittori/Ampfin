@@ -267,7 +267,8 @@ private struct HomeToolbarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .iOSToolbar(viewModel: viewModel, title: "Home",
-                        subtitle: style == HomeSubtitleStyle.date.rawValue ? greeting.dateLine : nil)
+                        subtitle: style == HomeSubtitleStyle.date.rawValue ? greeting.dateLine : nil,
+                        showsProfile: true)
             .task(id: inputs) { greeting.refresh(viewModel: viewModel) }
             // Wakes at every full hour; leaving the Home cancels the sleep.
             .task {
