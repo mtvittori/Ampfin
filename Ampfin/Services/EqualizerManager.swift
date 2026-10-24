@@ -42,9 +42,12 @@ final class EqualizerManager: ObservableObject {
 
     // MARK: - Audio Engine Components (used by AudioPlayerManager)
 
-    let audioEngine = AVAudioEngine()
-    let playerNode = AVAudioPlayerNode()
-    private let eq: AVAudioUnitEQ
+    /// These are replaced when the graph is rebuilt (see `rebuildEngine`): read them from here
+    /// every time, never keep a reference.
+    private(set) var audioEngine = AVAudioEngine()
+    private(set) var playerNode = AVAudioPlayerNode()
+    private var eq: AVAudioUnitEQ
+    private var configurationObserver: NSObjectProtocol?
 
     /// The format the chain is wired for. Rewiring is skipped when a song has the same
     /// one: AVAudioEngine can raise an exception while connecting, and that aborted the app.
@@ -74,10 +77,16 @@ final class EqualizerManager: ObservableObject {
         self.eq = AVAudioUnitEQ(numberOfBands: 10)
 
         setupEngine()
+        observeConfigurationChanges()
+    }
 
-        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
-                                               object: audioEngine, queue: .main) { [weak self] _ in
+    /// Watches the current engine; called again for a rebuilt one.
+    private func observeConfigurationChanges() {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main) { [weak self] _ in
             guard let self else { return }
+            PlaybackLog.log("EqualizerManager: configuration change, engine running=\(self.audioEngine.isRunning) \(PlaybackLog.routeDescription())")
             // The engine is stopped and its formats may be stale: rewire on the next song.
             self.connectedFormat = nil
             self.onConfigurationChange?()
@@ -116,15 +125,23 @@ final class EqualizerManager: ObservableObject {
         if let connectedFormat, connectedFormat == format { return true }
 
         let wasRunning = audioEngine.isRunning
+        PlaybackLog.log("EqualizerManager: format \(PlaybackLog.describe(connectedFormat)) -> \(PlaybackLog.describe(format)), engine running=\(wasRunning) \(PlaybackLog.routeDescription())")
         if wasRunning { audioEngine.stop() }
 
         var exception = AmpfinCatchException { self.wire(format) }
         if let first = exception {
-            print("EqualizerManager: rewiring failed – \(first.name.rawValue): \(first.reason ?? "")")
+            PlaybackLog.log("EqualizerManager: rewiring failed (attempt 1) – \(first.name.rawValue): \(first.reason ?? "")")
             // Start over from a clean graph and try once more.
             playerNode.stop()
             audioEngine.reset()
             exception = AmpfinCatchException { self.wire(format) }
+            if let second = exception {
+                PlaybackLog.log("EqualizerManager: rewiring failed (attempt 2) – \(second.name.rawValue): \(second.reason ?? "")")
+                // Last resort: the engine itself may be in a state a reset does not clear.
+                exception = rebuildEngine(wiring: format)
+            } else {
+                PlaybackLog.log("EqualizerManager: rewiring succeeded on attempt 2")
+            }
         }
         connectedFormat = exception == nil ? format : nil
 
@@ -132,6 +149,42 @@ final class EqualizerManager: ObservableObject {
             startEngine()
         }
         return exception == nil
+    }
+
+    /// Replaces the engine, the player node and the EQ unit with new ones, applies the
+    /// current settings and wires the chain for `format`. Returns the exception if even
+    /// that fails. AudioPlayerManager reads the nodes from here each time, and opens the
+    /// next file (which schedules it on the new node) after this, so nothing queued on the
+    /// old node is needed.
+    private func rebuildEngine(wiring format: AVAudioFormat) -> NSException? {
+        PlaybackLog.log("EqualizerManager: rebuilding the audio engine")
+        let volume = audioEngine.mainMixerNode.outputVolume
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
+
+        let oldEngine = audioEngine
+        let oldPlayer = playerNode
+        _ = AmpfinCatchException {
+            oldPlayer.stop()
+            oldEngine.stop()
+        }
+
+        audioEngine = AVAudioEngine()
+        playerNode = AVAudioPlayerNode()
+        eq = AVAudioUnitEQ(numberOfBands: 10)
+        observeConfigurationChanges()
+
+        let exception = AmpfinCatchException {
+            self.setupEngine()
+            self.audioEngine.mainMixerNode.outputVolume = volume
+            self.wire(format)
+        }
+        if let exception {
+            PlaybackLog.log("EqualizerManager: rebuild FAILED – \(exception.name.rawValue): \(exception.reason ?? "")")
+        } else {
+            PlaybackLog.log("EqualizerManager: rebuild succeeded for \(PlaybackLog.describe(format))")
+        }
+        return exception
     }
 
     private func wire(_ format: AVAudioFormat) {
@@ -154,7 +207,7 @@ final class EqualizerManager: ObservableObject {
                 do { try self.audioEngine.start() } catch { startError = error }
             }
             if audioEngine.isRunning { return true }
-            print("EqualizerManager: Failed to start engine (attempt \(attempt)) – \(startError.map { "\($0)" } ?? exception?.reason ?? "unknown")")
+            PlaybackLog.log("EqualizerManager: Failed to start engine (attempt \(attempt)) – \(startError.map { "\($0)" } ?? exception?.reason ?? "unknown") \(PlaybackLog.routeDescription())")
         }
         return false
     }

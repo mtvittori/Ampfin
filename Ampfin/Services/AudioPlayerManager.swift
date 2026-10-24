@@ -323,6 +323,7 @@ final class AudioPlayerManager: ObservableObject {
     private func fileLoaded(_ file: URL) {
         guard openFile(at: file) else {
             if wantsToPlay {
+                PlaybackLog.log("PLAYBACK FAILED \(songDescription) reason=open")
                 showPlaybackError("Impossibile riprodurre questo brano", systemImage: "exclamationmark.triangle")
             }
             isPlaying = false
@@ -356,7 +357,7 @@ final class AudioPlayerManager: ObservableObject {
         do {
             let audioFile = try openAudioFile(at: url)
             guard eqManager.reconnect(withFormat: audioFile.processingFormat) else {
-                print("Audio engine refused the format \(audioFile.processingFormat)")
+                PlaybackLog.log("openFile: audio engine refused the format \(PlaybackLog.describe(audioFile.processingFormat)) for \(songDescription), \(fileDescription(of: url))")
                 return false
             }
             currentAudioFile = audioFile
@@ -365,7 +366,7 @@ final class AudioPlayerManager: ObservableObject {
             scheduledStartFrame = 0
             return true
         } catch {
-            print("Failed to open audio file: \(error)")
+            PlaybackLog.log("openFile: could not open \(songDescription), \(fileDescription(of: url)) – \(error)")
             return false
         }
     }
@@ -378,17 +379,38 @@ final class AudioPlayerManager: ObservableObject {
         var typedTried = false
         if typedFirst, let typed = typedLink(for: url) {
             typedTried = true
-            if let file = try? AVAudioFile(forReading: typed) { return file }
-            print("Typed link did not open, trying the original file")
+            do {
+                return try AVAudioFile(forReading: typed)
+            } catch {
+                PlaybackLog.log("openAudioFile: typed link failed \(PlaybackLog.describe(error)), trying the original file")
+            }
         }
         do {
             return try AVAudioFile(forReading: url)
         } catch {
-            print("Plain open failed: \(error)")
+            PlaybackLog.log("openAudioFile: plain open failed \(PlaybackLog.describe(error)) – \(error)")
             guard !typedTried, let typed = typedLink(for: url) else { throw error }
-            print("Retrying through typed link")
-            return try AVAudioFile(forReading: typed)
+            PlaybackLog.log("openAudioFile: retrying through typed link")
+            do {
+                return try AVAudioFile(forReading: typed)
+            } catch {
+                PlaybackLog.log("openAudioFile: typed link failed \(PlaybackLog.describe(error)) – \(error)")
+                throw error
+            }
         }
+    }
+
+    /// The song being opened, for the playback log.
+    private var songDescription: String {
+        guard let item = currentlyPlayingItem else { return "unknown song" }
+        return "\u{22}\(item.Name)\u{22} (\(item.Id))"
+    }
+
+    /// File name, extension, size and detected type, for the playback log.
+    private func fileDescription(of url: URL) -> String {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? nil
+        let ext = url.pathExtension.isEmpty ? "none" : url.pathExtension
+        return "file=\(url.lastPathComponent) ext=\(ext) size=\(size.map(String.init) ?? "?") detected=\(Self.detectedAudioExtension(of: url) ?? "unknown")"
     }
 
     private static let knownAudioExtensions: Set<String> = [
@@ -675,6 +697,7 @@ final class AudioPlayerManager: ObservableObject {
     /// The engine would not start: show paused, so the next tap tries again.
     private func markPausedAfterFailedStart(silent: Bool = false) {
         if !silent && wantsToPlay {
+            PlaybackLog.log("PLAYBACK FAILED \(songDescription) reason=engine")
             showPlaybackError("Impossibile riprodurre questo brano", systemImage: "exclamationmark.triangle")
         }
         wantsToPlay = false
