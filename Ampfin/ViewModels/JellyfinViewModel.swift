@@ -56,11 +56,12 @@ class JellyfinViewModel: ObservableObject {
     /// querying MusicAlbum items by DatePlayed directly: Jellyfin only tracks LastPlayedDate on the
     /// individual track, not aggregated onto the album folder, so that query returned stale/empty results.
     var recentlyPlayedAlbums: [AlbumItem] {
+        let albumsById = Dictionary(albums.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var seenAlbumIds = Set<String>()
         var result: [AlbumItem] = []
         for track in recentlyPlayedTracks {
             guard let albumId = track.AlbumId, !seenAlbumIds.contains(albumId) else { continue }
-            guard let album = albums.first(where: { $0.id == albumId }) else { continue }
+            guard let album = albumsById[albumId] else { continue }
             seenAlbumIds.insert(albumId)
             result.append(album)
         }

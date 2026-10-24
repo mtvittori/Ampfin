@@ -173,6 +173,8 @@ struct AppleHomeView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await viewModel.fetchRecentlyAddedAlbumsIfNeeded() }
+            // Listens made elsewhere (web, another phone) show up without restarting the app
+            Task { await viewModel.fetchRecentlyPlayedTracks() }
         }
         // Playlists, and the mixes made again for a new day, user or library.
         .task(id: "\(viewModel.audioItems.count)|\(viewModel.recentlyAddedAlbums.first?.Id ?? "")") {

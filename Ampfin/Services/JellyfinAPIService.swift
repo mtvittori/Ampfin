@@ -137,13 +137,14 @@ class JellyfinAPIService {
 
     // MARK: - Data Fetching
     
-    /// Fetches recently played tracks for the current user
+    /// Fetches the last 200 songs played by the current user (enough to fill the albums strip
+    /// with distinct albums, not just the album of the last listen)
     func fetchRecentlyPlayedTracks() async throws -> [AudioItem] {
         let libraryIds = try await fetchMusicLibraryIds()
         let tracks = try await fetchMerged(AudioResponse.self, from: libraryIds) { id in
-            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Fields=AlbumArtists,Artists,AlbumId,Genres&SortBy=DatePlayed&SortOrder=Descending&Limit=20"
+            "/Users/\(userId)/Items?ParentId=\(id)&IncludeItemTypes=Audio&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=200&EnableUserData=true&Fields=AlbumArtists,Artists,AlbumId,Genres"
         }
-        return Array(Self.mostRecentlyPlayed(tracks).prefix(20))
+        return Array(Self.mostRecentlyPlayed(tracks).prefix(200))
     }
 
     // MARK: - Playback reporting
