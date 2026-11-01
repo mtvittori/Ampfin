@@ -31,7 +31,20 @@ struct MacArtistPage: View {
                         Text(details(albums: albums.count, tracks: tracks.count))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        MacPlayButtons(tracks: tracks).padding(.top, 8)
+                        HStack(spacing: 8) {
+                            MacPlayButtons(tracks: tracks)
+                            Menu {
+                                IPodMenuItems(kind: .artist, id: artist.Id, name: artist.Name)
+                            } label: {
+                                Image(systemName: "ellipsis")
+                            }
+                            .menuStyle(.button)
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                        }
+                        .padding(.top, 8)
                     }
                     Spacer(minLength: 0)
                 }

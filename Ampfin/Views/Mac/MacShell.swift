@@ -9,7 +9,7 @@ import SwiftUI
 
 /// What the sidebar can show.
 enum MacSection: String, Identifiable {
-    case search, home, recent, artists, albums, tracks, genres, favorites, dynamicRange, playlists
+    case search, home, recent, artists, albums, tracks, genres, favorites, dynamicRange, playlists, ipod
 
     var id: String { rawValue }
 
@@ -25,6 +25,7 @@ enum MacSection: String, Identifiable {
         case .favorites: return "Preferiti"
         case .dynamicRange: return "Classifica DR"
         case .playlists: return "Playlist"
+        case .ipod: return "iPod"
         }
     }
 
@@ -40,6 +41,7 @@ enum MacSection: String, Identifiable {
         case .favorites: return "heart"
         case .dynamicRange: return "waveform.badge.magnifyingglass"
         case .playlists: return "music.note.list"
+        case .ipod: return "ipod"
         }
     }
 }
@@ -154,6 +156,10 @@ struct MacShell: View {
             Section("Playlist") {
                 Label(MacSection.playlists.title, systemImage: MacSection.playlists.systemImage).tag(MacSection.playlists)
             }
+
+            Section("Dispositivi") {
+                Label(MacSection.ipod.title, systemImage: MacSection.ipod.systemImage).tag(MacSection.ipod)
+            }
         }
         .listStyle(.sidebar)
         // Your profile at the bottom, as in Music; it opens the Settings window.
@@ -192,6 +198,7 @@ struct MacShell: View {
         case .favorites: MacFavoritesView()
         case .dynamicRange: DRRankingView()
         case .playlists: MacPlaylistsView()
+        case .ipod: MacIPodPage()
         }
     }
 }

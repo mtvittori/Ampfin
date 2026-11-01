@@ -165,6 +165,10 @@ struct MergeArtistMenu: ViewModifier {
 
     func body(content: Content) -> some View {
         content.contextMenu {
+            #if os(macOS)
+            IPodMenuItems(kind: .artist, id: artist.Id, name: artist.Name)
+            Divider()
+            #endif
             Button("Unisci con altri artisti…", systemImage: "arrow.triangle.merge") {
                 target = artist
             }

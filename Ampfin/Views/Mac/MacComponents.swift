@@ -279,6 +279,7 @@ struct MacAlbumCard: View {
             } label: { Label("Riproduci", systemImage: "play.fill") }
             AlbumQueueMenuItems(album: album).environmentObject(viewModel)
             Divider()
+            IPodMenuItems(kind: .album, id: album.id, name: album.Name)
             Button {
                 viewModel.toggleFavoriteAlbum(album.id)
             } label: {

@@ -311,7 +311,7 @@ class JellyfinAPIService {
     }
 
     func fetchAlbumTracks(albumId: String) async throws -> [AudioItem] {
-        let endpoint = "/Users/\(userId)/Items?ParentId=\(albumId)&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Audio&Fields=AlbumArtists,Artists,MediaSources,AlbumId"
+        let endpoint = "/Users/\(userId)/Items?ParentId=\(albumId)&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Audio&Fields=AlbumArtists,Artists,MediaSources,AlbumId,Genres,ProductionYear,DateCreated"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }
@@ -327,7 +327,7 @@ class JellyfinAPIService {
 
     /// The songs of a playlist, in its order, with each entry's id (to remove it).
     func fetchPlaylistItems(playlistId: String) async throws -> [AudioItem] {
-        let endpoint = "/Playlists/\(playlistId)/Items?UserId=\(userId)&Fields=AlbumArtists,Artists,AlbumId,Genres"
+        let endpoint = "/Playlists/\(playlistId)/Items?UserId=\(userId)&Fields=AlbumArtists,Artists,AlbumId,Genres,ProductionYear,DateCreated"
         let response: AudioResponse = try await fetch(endpoint: endpoint)
         return response.Items
     }

@@ -52,6 +52,11 @@ struct AudioItem: Codable, Identifiable {
     /// library cache written before has none.
     let DateCreated: String?
     var dateAddedDate: Date? { DateCreated.flatMap(AlbumItem.parseDate) }
+    /// Track number, disc number and year, for file names and tags (the iPod sync). Optional:
+    /// a library cache written before has none.
+    let IndexNumber: Int?
+    let ParentIndexNumber: Int?
+    let ProductionYear: Int?
 
     var mainArtistName: String? { AlbumArtists?.first?.Name ?? Artists?.first }
     

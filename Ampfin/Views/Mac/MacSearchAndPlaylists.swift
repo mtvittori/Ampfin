@@ -85,6 +85,7 @@ struct MacSearchView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu { IPodMenuItems(kind: .artist, id: artist.Id, name: artist.Name) }
                             }
                         }
                     }
@@ -263,6 +264,7 @@ private struct MacPlaylistCard: View {
             Button { Task { await play(shuffled: false) } } label: { Label("Riproduci", systemImage: "play.fill") }
             Button { Task { await play(shuffled: true) } } label: { Label("Riproduci in ordine casuale", systemImage: "shuffle") }
             Divider()
+            IPodMenuItems(kind: .playlist, id: playlist.Id, name: playlist.Name)
             Button { viewModel.toggleFavoritePlaylist(playlist.Id) } label: {
                 Label(viewModel.isPlaylistFavorite(playlist.Id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti",
                       systemImage: viewModel.isPlaylistFavorite(playlist.Id) ? "heart.slash" : "heart")

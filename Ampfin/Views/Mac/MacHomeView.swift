@@ -176,7 +176,11 @@ private struct MacPickCard: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
         .animation(.easeInOut(duration: 0.4), value: palette)
-        .contextMenu { AlbumQueueMenuItems(album: album).environmentObject(viewModel) }
+        .contextMenu {
+            AlbumQueueMenuItems(album: album).environmentObject(viewModel)
+            Divider()
+            IPodMenuItems(kind: .album, id: album.id, name: album.Name)
+        }
         .task(id: album.Id) {
             guard let url = viewModel.artworkURL(for: album.id, size: 600),
                   let loaded = await ImageLoader.shared.firstImage(from: [url]) else { return }

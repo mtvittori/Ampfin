@@ -240,6 +240,7 @@ struct MacGenrePage: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .contextMenu { IPodMenuItems(kind: .artist, id: artist.Id, name: artist.Name) }
                         }
                     }
                 }
