@@ -144,6 +144,8 @@ final class IPodSync: ObservableObject {
     @Published private(set) var summary: IPodSummary?
     /// Per selection entry (`IPodSelectionEntry.id`), kept up to date by `refreshStats`.
     @Published private(set) var stats: [String: IPodEntryStats] = [:]
+    /// The whole selection, a song in two places counted once.
+    @Published private(set) var total = IPodEntryStats(tracks: 0, bytes: 0)
 
     private var task: Task<Void, Never>?
     /// Playlist contents, fetched once per session: the list asks for them at every change.
@@ -153,16 +155,24 @@ final class IPodSync: ObservableObject {
 
     // MARK: Estimates
 
-    /// Track count and estimated size of every entry, from the library (no network except
-    /// the playlists, once).
+    /// Track count and estimated size of every entry and dynamic source, from the library (no
+    /// network except the playlists, once).
     func refreshStats(viewModel: JellyfinViewModel) async {
         let format = IPodFormat.current
-        let entries = IPodSelection.shared.entries
+        let selection = IPodSelection.shared
+        let entries = selection.entries
         var byAlbum: [String: [AudioItem]] = [:]
         if entries.contains(where: { $0.kind == .album }) {
             byAlbum = Dictionary(grouping: viewModel.audioItems.filter { $0.AlbumId != nil }, by: { $0.AlbumId! })
         }
         var result: [String: IPodEntryStats] = [:]
+        var union: [String: AudioItem] = [:]
+        func record(_ key: String, _ items: [AudioItem], counted: Bool = true) {
+            result[key] = IPodEntryStats(
+                tracks: items.count,
+                bytes: items.reduce(0) { $0 + Self.makeTrackLight($1).estimatedBytes(for: format) })
+            if counted { for item in items { union[item.Id] = item } }
+        }
         for entry in entries {
             let items: [AudioItem]
             switch entry.kind {
@@ -170,13 +180,20 @@ final class IPodSync: ObservableObject {
             case .album: items = byAlbum[entry.itemId] ?? []
             case .playlist: items = await playlistItems(entry.itemId, viewModel: viewModel)
             }
-            result[entry.id] = IPodEntryStats(
-                tracks: items.count,
-                bytes: items.reduce(0) { $0 + Self.makeTrackLight($1).estimatedBytes(for: format) })
+            record(entry.id, items)
             // A big selection shouldn't hold the main thread for one stretch.
             await Task.yield()
         }
+        for source in IPodDynamicSource.allCases {
+            // Switched-off sources show their count too, so the user sees what turning one on adds.
+            record(source.statsKey, await dynamicItems(source, viewModel: viewModel, api: nil) ?? [],
+                   counted: selection.isOn(source))
+            await Task.yield()
+        }
         stats = result
+        total = IPodEntryStats(
+            tracks: union.count,
+            bytes: union.values.reduce(0) { $0 + Self.makeTrackLight($1).estimatedBytes(for: format) })
     }
 
     /// Only duration and container matter for the size.
@@ -207,12 +224,59 @@ final class IPodSync: ObservableObject {
         await fetchPlaylist(id, viewModel: viewModel, fresh: false) ?? []
     }
 
+    /// The songs a dynamic source stands for right now. With `api` (a sync) the server is asked
+    /// and nil means it couldn't be: the sync must stop. Without it (the page's numbers) the
+    /// library and what the Home already loaded are used.
+    private func dynamicItems(_ source: IPodDynamicSource, viewModel: JellyfinViewModel,
+                              api: JellyfinAPIService?) async -> [AudioItem]? {
+        let selection = IPodSelection.shared
+        switch source {
+        case .favorites:
+            // Same as the Favorites page: the songs with a heart, and every song of the albums with one.
+            let albumIds = viewModel.favoriteAlbumIds
+            let songs = viewModel.favoriteTracks + viewModel.audioItems.filter { $0.AlbumId.map(albumIds.contains) ?? false }
+            var seen = Set<String>()
+            return songs.filter { seen.insert($0.Id).inserted }
+        case .recentAlbums:
+            // Same order as the "Aggiunti di recente" page.
+            let newest = viewModel.albums
+                .sorted { ($0.dateAddedDate ?? .distantPast) > ($1.dateAddedDate ?? .distantPast) }
+                .prefix(selection.recentAlbumsCount)
+            if newest.isEmpty { return viewModel.audioItems.isEmpty ? nil : [] }
+            let ids = Set(newest.map(\.Id))
+            let local = Dictionary(grouping: viewModel.audioItems.filter { $0.AlbumId.map(ids.contains) ?? false },
+                                   by: { $0.AlbumId! })
+            guard let api else { return local.values.flatMap { $0 } }
+            var items: [AudioItem] = []
+            for album in newest {
+                if let fetched = try? await api.fetchAlbumTracks(albumId: album.Id), !fetched.isEmpty {
+                    items += fetched
+                } else if let known = local[album.Id] {
+                    items += known
+                } else {
+                    return nil
+                }
+            }
+            return items
+        case .recentPlayed:
+            let count = selection.recentPlayedCount
+            guard let api else { return Array(viewModel.recentlyPlayedTracks.prefix(count)) }
+            guard let played = try? await api.fetchRecentlyPlayedTracks() else { return nil }
+            return Array(played.prefix(count))
+        }
+    }
+
     /// Songs of every entry with the full data (track numbers, year), in selection order.
     /// `failed` names the entries that couldn't be read: the sync must not go on then, or the
     /// songs of those entries would look unselected and be taken off the iPod.
     private func resolve(viewModel: JellyfinViewModel) async -> (tracks: [IPodTrack], playlists: [IPodPlaylistJob], failed: [String]) {
-        guard let api = viewModel.apiService else { return ([], [], IPodSelection.shared.entries.map(\.name)) }
+        guard let api = viewModel.apiService else { return ([], [], ["server"]) }
         var failed: [String] = []
+        // Without the library nothing can be matched, and every song would look unselected.
+        let selection = IPodSelection.shared
+        if viewModel.audioItems.isEmpty, !selection.entries.isEmpty || !selection.enabledSources.isEmpty {
+            return ([], [], ["libreria non ancora caricata"])
+        }
         let albumsById = Dictionary(viewModel.albums.map { ($0.Id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // How many songs and discs each album has in the library, for "3/12" and "disc 1/2".
@@ -247,6 +311,18 @@ final class IPodSync: ObservableObject {
                 }
                 items += songs
                 playlists.append(IPodPlaylistJob(name: entry.name, trackIds: songs.map(\.Id)))
+            }
+            if Task.isCancelled { break }
+        }
+        for source in selection.enabledSources {
+            guard let songs = await dynamicItems(source, viewModel: viewModel, api: api) else {
+                failed.append(source.title)
+                continue
+            }
+            let numbered = await withNumbers(songs, api: api)
+            items += numbered
+            if !numbered.isEmpty {
+                playlists.append(IPodPlaylistJob(name: source.playlistName, trackIds: numbered.map(\.Id)))
             }
             if Task.isCancelled { break }
         }

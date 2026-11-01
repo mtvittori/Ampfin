@@ -34,7 +34,9 @@ struct MacIPodPage: View {
 
     /// Changes whenever the numbers in the list have to be worked out again.
     private var statsKey: String {
-        selection.entries.map(\.id).joined(separator: ",") + "|\(formatRaw)|\(viewModel.audioItems.count)"
+        selection.entries.map(\.id).joined(separator: ",") + "|\(formatRaw)|\(viewModel.audioItems.count)|\(selection.dynamicKey)"
+            + "|\(viewModel.favoriteTrackIds.count)|\(viewModel.favoriteAlbumIds.count)|\(viewModel.albums.count)"
+            + "|\(viewModel.recentlyPlayedTracks.first?.Id ?? "")"
     }
 
     var body: some View {
@@ -42,6 +44,7 @@ struct MacIPodPage: View {
             VStack(alignment: .leading, spacing: 28) {
                 MacPageHeader(title: "iPod", subtitle: "Copia sull'iPod con Rockbox la musica che scegli")
                 volumeSection
+                automaticSection
                 selectionSection
                 formatSection
                 syncSection
@@ -52,6 +55,7 @@ struct MacIPodPage: View {
         .navigationTitle("iPod")
         .onAppear { volume.refresh() }
         .task(id: statsKey) { await sync.refreshStats(viewModel: viewModel) }
+        .task { await viewModel.fetchRecentlyPlayedTracksIfNeeded() }
     }
 
     // MARK: - Volume
@@ -97,6 +101,55 @@ struct MacIPodPage: View {
         }
     }
 
+    // MARK: - Automatic sources
+
+    private var automaticSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            MacSectionTitle(title: "Automatici")
+            Text("Si aggiornano da soli a ogni sincronizzazione: quello che esce dall'elenco viene tolto dall'iPod, se nessun'altra voce lo vuole.")
+                .font(.callout).foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ForEach(Array(IPodDynamicSource.allCases.enumerated()), id: \.element.id) { index, source in
+                    automaticRow(source, striped: index.isMultiple(of: 2))
+                }
+            }
+        }
+    }
+
+    private func automaticRow(_ source: IPodDynamicSource, striped: Bool) -> some View {
+        let on = Binding(get: { selection.isOn(source) }, set: { selection.setOn(source, $0) })
+        return HStack(spacing: 12) {
+            Image(systemName: source.systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(source.title).lineLimit(1)
+                Text(source.detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            if let choices = source.countChoices {
+                Picker("Quanti", selection: Binding(get: { selection.count(source) }, set: { selection.setCount(source, $0) })) {
+                    ForEach(choices, id: \.self) { Text("\($0)").tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 70)
+                .disabled(!on.wrappedValue)
+            }
+            if let stats = sync.stats[source.statsKey] {
+                Text("\(stats.tracks == 1 ? "1 brano" : "\(stats.tracks) brani") · \(Self.size(stats.bytes))")
+                    .font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(minWidth: 130, alignment: .trailing)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Toggle(source.title, isOn: on).labelsHidden().toggleStyle(.switch)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 48)
+        .background(striped ? AnyShapeStyle(.primary.opacity(0.035)) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
     // MARK: - Selection
 
     private var selectionSection: some View {
@@ -111,8 +164,8 @@ struct MacIPodPage: View {
                         row(entry, striped: index.isMultiple(of: 2))
                     }
                 }
-                totalLine
             }
+            if !selection.entries.isEmpty || !selection.enabledSources.isEmpty { totalLine }
         }
     }
 
@@ -147,11 +200,11 @@ struct MacIPodPage: View {
     }
 
     private var totalLine: some View {
-        let total = selection.entries.reduce(Int64(0)) { $0 + (sync.stats[$1.id]?.bytes ?? 0) }
+        let total = sync.total.bytes
         let free = volume.freeBytes
         let tooBig = free.map { total > $0 } ?? false
         return HStack {
-            Text("Totale stimato: \(Self.size(total))")
+            Text("Totale stimato: \(sync.total.tracks) brani · \(Self.size(total))")
             if let free { Text("· liberi sull'iPod: \(Self.size(free))") }
             if tooBig { Text("Non ci sta").foregroundStyle(.red).fontWeight(.semibold) }
         }

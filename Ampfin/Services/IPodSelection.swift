@@ -35,6 +35,60 @@ struct IPodSelectionEntry: Codable, Identifiable, Hashable {
     var id: String { "\(kind.rawValue):\(itemId)" }
 }
 
+/// Sources that are worked out again at every sync, switched on in the iPod page.
+enum IPodDynamicSource: String, CaseIterable, Identifiable {
+    case favorites, recentAlbums, recentPlayed
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .favorites: return "Preferiti"
+        case .recentAlbums: return "Aggiunti di recente"
+        case .recentPlayed: return "Ascoltati di recente"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .favorites: return "Brani e album con il cuore"
+        case .recentAlbums: return "Gli ultimi album entrati in libreria"
+        case .recentPlayed: return "Gli ultimi brani che hai ascoltato"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .favorites: return "heart"
+        case .recentAlbums: return "clock"
+        case .recentPlayed: return "play.circle"
+        }
+    }
+
+    /// Choices for "how many", nil when the source has no number.
+    var countChoices: [Int]? {
+        switch self {
+        case .favorites: return nil
+        case .recentAlbums: return [10, 25, 50]
+        case .recentPlayed: return [50, 100, 200]
+        }
+    }
+
+    var defaultCount: Int {
+        switch self {
+        case .favorites: return 0
+        case .recentAlbums: return 25
+        case .recentPlayed: return 100
+        }
+    }
+
+    /// Key in `IPodEntryStats` dictionaries, apart from the manual entries' ids.
+    var statsKey: String { "auto:\(rawValue)" }
+
+    /// Playlist written to /Playlists for the source.
+    var playlistName: String { "Ampfin - \(title)" }
+}
+
 @MainActor
 final class IPodSelection: ObservableObject {
     static let shared = IPodSelection()
@@ -42,7 +96,60 @@ final class IPodSelection: ObservableObject {
 
     @Published private(set) var entries: [IPodSelectionEntry]
 
+    // The dynamic sources: a switch each, and how many for the two "recent" ones.
+    @Published var favoritesOn: Bool { didSet { UserDefaults.standard.set(favoritesOn, forKey: "ipodAuto_favorites") } }
+    @Published var recentAlbumsOn: Bool { didSet { UserDefaults.standard.set(recentAlbumsOn, forKey: "ipodAuto_recentAlbums") } }
+    @Published var recentPlayedOn: Bool { didSet { UserDefaults.standard.set(recentPlayedOn, forKey: "ipodAuto_recentPlayed") } }
+    @Published var recentAlbumsCount: Int { didSet { UserDefaults.standard.set(recentAlbumsCount, forKey: "ipodAuto_recentAlbumsCount") } }
+    @Published var recentPlayedCount: Int { didSet { UserDefaults.standard.set(recentPlayedCount, forKey: "ipodAuto_recentPlayedCount") } }
+
+    func isOn(_ source: IPodDynamicSource) -> Bool {
+        switch source {
+        case .favorites: return favoritesOn
+        case .recentAlbums: return recentAlbumsOn
+        case .recentPlayed: return recentPlayedOn
+        }
+    }
+
+    func setOn(_ source: IPodDynamicSource, _ on: Bool) {
+        switch source {
+        case .favorites: favoritesOn = on
+        case .recentAlbums: recentAlbumsOn = on
+        case .recentPlayed: recentPlayedOn = on
+        }
+    }
+
+    func count(_ source: IPodDynamicSource) -> Int {
+        switch source {
+        case .favorites: return 0
+        case .recentAlbums: return recentAlbumsCount
+        case .recentPlayed: return recentPlayedCount
+        }
+    }
+
+    func setCount(_ source: IPodDynamicSource, _ count: Int) {
+        switch source {
+        case .favorites: break
+        case .recentAlbums: recentAlbumsCount = count
+        case .recentPlayed: recentPlayedCount = count
+        }
+    }
+
+    var enabledSources: [IPodDynamicSource] { IPodDynamicSource.allCases.filter(isOn) }
+
+    /// Changes whenever a dynamic setting does, for `.task(id:)`.
+    var dynamicKey: String {
+        enabledSources.map { "\($0.rawValue)\(count($0))" }.joined(separator: ",")
+    }
+
     private init() {
+        let defaults = UserDefaults.standard
+        favoritesOn = defaults.bool(forKey: "ipodAuto_favorites")
+        recentAlbumsOn = defaults.bool(forKey: "ipodAuto_recentAlbums")
+        recentPlayedOn = defaults.bool(forKey: "ipodAuto_recentPlayed")
+        recentAlbumsCount = defaults.object(forKey: "ipodAuto_recentAlbumsCount") as? Int ?? IPodDynamicSource.recentAlbums.defaultCount
+        recentPlayedCount = defaults.object(forKey: "ipodAuto_recentPlayedCount") as? Int ?? IPodDynamicSource.recentPlayed.defaultCount
+
         if let data = UserDefaults.standard.data(forKey: Self.storageKey),
            let saved = try? JSONDecoder().decode([IPodSelectionEntry].self, from: data) {
             entries = saved

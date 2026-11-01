@@ -165,7 +165,9 @@ final class IPodWorker: @unchecked Sendable {
          api: JellyfinAPIService, progress: @escaping @Sendable (IPodProgress) -> Void) {
         self.volume = volume
         self.format = format
-        self.tracks = tracks
+        // A song wanted by several sources is written once.
+        var seen = Set<String>()
+        self.tracks = tracks.filter { seen.insert($0.id).inserted }
         self.playlists = playlists
         self.api = api
         self.onProgress = progress
