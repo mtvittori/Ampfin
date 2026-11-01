@@ -7,6 +7,19 @@
 #if os(macOS)
 import Foundation
 
+/// Drops every extended attribute of a file this app wrote. The sandbox tags new files with
+/// `com.apple.quarantine`, and on the FAT32 iPod macOS then adds a `._` companion for each one.
+func clearExtendedAttributes(at url: URL) {
+    let path = url.path
+    let size = listxattr(path, nil, 0, 0)
+    guard size > 0 else { return }
+    var names = [CChar](repeating: 0, count: size)
+    guard listxattr(path, &names, size, 0) > 0 else { return }
+    for name in names.split(separator: 0) {
+        removexattr(path, String(decoding: name.map { UInt8(bitPattern: $0) }, as: UTF8.self), 0)
+    }
+}
+
 // MARK: - Manifest
 
 struct IPodManifest: Codable {
@@ -53,6 +66,7 @@ private actor IPodManifestStore {
     func save() throws {
         let data = try JSONEncoder().encode(manifest)
         try data.write(to: url, options: .atomic)
+        clearExtendedAttributes(at: url)
     }
 }
 
@@ -100,6 +114,11 @@ enum IPodPaths {
             }
         }
         return prefix + sanitize(track.title)
+    }
+
+    /// The `._` companion macOS keeps for a file on the FAT32 volume.
+    static func appleDouble(of path: String) -> String {
+        (path as NSString).deletingLastPathComponent + "/._" + (path as NSString).lastPathComponent
     }
 
     /// Rockbox's path limit is 260 bytes.
@@ -282,8 +301,13 @@ final class IPodWorker: @unchecked Sendable {
                 let newPath = entry.base + "." + (entry.old.path as NSString).pathExtension
                 try fm.createDirectory(at: url((newPath as NSString).deletingLastPathComponent), withIntermediateDirectories: true)
                 try fm.moveItem(at: url(entry.old.path), to: url(newPath))
+                clearExtendedAttributes(at: url(newPath))
+                try? fm.removeItem(at: url(IPodPaths.appleDouble(of: entry.old.path)))
                 let oldLyrics = Self.lyricsPath(for: entry.old.path)
-                if exists(oldLyrics) { try? fm.moveItem(at: url(oldLyrics), to: url(Self.lyricsPath(for: newPath))) }
+                if exists(oldLyrics) {
+                    try? fm.moveItem(at: url(oldLyrics), to: url(Self.lyricsPath(for: newPath)))
+                    try? fm.removeItem(at: url(IPodPaths.appleDouble(of: oldLyrics)))
+                }
                 var item = entry.old
                 item.path = newPath
                 await store.set(entry.track.id, item)
@@ -332,12 +356,16 @@ final class IPodWorker: @unchecked Sendable {
         try? await store.save()
         if let stop { summary.stopReason = stop }
         if summary.stopReason == nil, Task.isCancelled { summary.stopReason = "Sincronizzazione annullata." }
-        if summary.stopReason != nil { return summary }
+        if summary.stopReason != nil {
+            await removeAppleDoubles(store: store)
+            return summary
+        }
 
         // 4. Playlists.
         report { $0 = IPodProgress(phase: .playlists, done: 0, total: playlists.count) }
         await writePlaylists(store: store, summary: &summary)
         try? await store.save()
+        await removeAppleDoubles(store: store)
         return summary
     }
 
@@ -416,6 +444,8 @@ final class IPodWorker: @unchecked Sendable {
                 try fm.copyItem(at: file, to: part)
                 if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
                 try fm.moveItem(at: part, to: destination)
+                // The copy carries the original's attributes (quarantine) along.
+                clearExtendedAttributes(at: destination)
             } catch {
                 try? fm.removeItem(at: part)
                 throw error
@@ -491,7 +521,9 @@ final class IPodWorker: @unchecked Sendable {
             let centis = Int((max(start, 0) * 100).rounded())
             return String(format: "[%02d:%02d.%02d]", centis / 6000, centis / 100 % 60, centis % 100) + line.text
         }.joined(separator: "\n") + "\n"
-        try? text.write(to: url(Self.lyricsPath(for: path)), atomically: true, encoding: .utf8)
+        let lyrics = url(Self.lyricsPath(for: path))
+        try? text.write(to: lyrics, atomically: true, encoding: .utf8)
+        clearExtendedAttributes(at: lyrics)
     }
 
     /// `cover.jpg` in the album's folder: a small baseline JPEG, once per folder.
@@ -508,6 +540,7 @@ final class IPodWorker: @unchecked Sendable {
               let jpeg = try? IPodConverter.coverJPEG(from: data) else { return }
         try? fm.createDirectory(at: url(folder), withIntermediateDirectories: true)
         if (try? jpeg.write(to: url(path), options: .atomic)) != nil {
+            clearExtendedAttributes(at: url(path))
             await store.addCover(folder)
         }
     }
@@ -517,8 +550,37 @@ final class IPodWorker: @unchecked Sendable {
     /// Deletes a song and its `.lrc`. Only called with paths from the manifest.
     private func remove(path: String) {
         guard IPodPaths.isOurs(path) else { return }
-        try? fm.removeItem(at: url(path))
-        try? fm.removeItem(at: url(Self.lyricsPath(for: path)))
+        for file in [path, Self.lyricsPath(for: path)] {
+            try? fm.removeItem(at: url(file))
+            try? fm.removeItem(at: url(IPodPaths.appleDouble(of: file)))
+        }
+    }
+
+    /// Deletes the `._` companions of the files this app manages, and only those: a `._` whose
+    /// file isn't ours (the user's, or a Finder leftover) stays.
+    private func removeAppleDoubles(store: IPodManifestStore) async {
+        let manifest = await store.manifest
+        // Folder → lowercased names of our files in it (FAT32 ignores case).
+        var managed: [String: Set<String>] = [:]
+        func manage(_ path: String) {
+            guard IPodPaths.isOurs(path) else { return }
+            let folder = (path as NSString).deletingLastPathComponent
+            managed[folder, default: []].insert((path as NSString).lastPathComponent.lowercased())
+        }
+        manage(IPodPaths.manifestPath)
+        for item in manifest.items.values {
+            manage(item.path)
+            manage(Self.lyricsPath(for: item.path))
+        }
+        for folder in manifest.covers { manage(folder + "/cover.jpg") }
+        for playlist in manifest.playlists { manage(playlist) }
+
+        for (folder, names) in managed {
+            guard let entries = try? fm.contentsOfDirectory(atPath: url(folder).path) else { continue }
+            for entry in entries where entry.hasPrefix("._") && names.contains(String(entry.dropFirst(2)).lowercased()) {
+                try? fm.removeItem(at: url(folder + "/" + entry))
+            }
+        }
     }
 
     /// Removes folders that hold nothing but our `cover.jpg` (and Finder's leftovers),
@@ -548,7 +610,10 @@ final class IPodWorker: @unchecked Sendable {
     private func writePlaylists(store: IPodManifestStore, summary: inout IPodSummary) async {
         let manifest = await store.manifest
         let byId = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for old in manifest.playlists where IPodPaths.isOurs(old) { try? fm.removeItem(at: url(old)) }
+        for old in manifest.playlists where IPodPaths.isOurs(old) {
+            try? fm.removeItem(at: url(old))
+            try? fm.removeItem(at: url(IPodPaths.appleDouble(of: old)))
+        }
 
         var written: [String] = []
         var used = Set<String>()
@@ -574,6 +639,7 @@ final class IPodWorker: @unchecked Sendable {
             }
             do {
                 try (lines.joined(separator: "\n") + "\n").write(to: url(path), atomically: true, encoding: .utf8)
+                clearExtendedAttributes(at: url(path))
                 written.append(path)
             } catch {
                 summary.errors.append("Playlist “\(job.name)”: \(error.localizedDescription)")

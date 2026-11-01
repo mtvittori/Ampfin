@@ -100,6 +100,8 @@ enum IPodConverter {
         guard writer.canAdd(input) else { throw IPodConverterError.writerFailed("formato non supportato") }
         writer.add(input)
         writer.metadata = metadata(for: tags)
+        // moov first: Rockbox reads the file front to back and can't start a song whose index is at the end.
+        writer.shouldOptimizeForNetworkUse = true
 
         guard reader.startReading() else {
             throw IPodConverterError.readerFailed(reader.error?.localizedDescription ?? "sconosciuto")
