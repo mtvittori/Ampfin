@@ -445,8 +445,10 @@ private struct IOSToolbarModifier: ViewModifier {
                     HStack(spacing: 2) {
                         if showsProfile {
                             NavigationLink(destination: ScrobbleStatsPage().environmentObject(viewModel)) {
-                                ProfileAvatar(viewModel: viewModel, size: 32)
-                                    .frame(width: 48, height: 44)
+                                // Concentric with the capsule: the same 4 pt of glass above, below and before it.
+                                ProfileAvatar(viewModel: viewModel, size: 36)
+                                    .padding(.trailing, 4)
+                                    .frame(height: 44)
                                     .contentShape(Rectangle())
                             }
                             .accessibilityLabel("Profilo")
@@ -462,7 +464,8 @@ private struct IOSToolbarModifier: ViewModifier {
                         }
                         .accessibilityLabel("Impostazioni")
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.leading, showsProfile ? 4 : 6)
+                    .padding(.trailing, 6)
                     .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
                 }
                 .sharedBackgroundVisibility(.hidden)
@@ -503,8 +506,11 @@ private struct AmpfinTopBar: View {
             HStack(spacing: 4) {
                 if showsProfile {
                     NavigationLink(destination: ScrobbleStatsPage().environmentObject(viewModel)) {
-                        ProfileAvatar(viewModel: viewModel, size: 38)
-                            .frame(width: 54, height: 52)
+                        // Concentric with the capsule, as in Telegram's chat header: the
+                        // same 5 pt of glass above, below and before the picture.
+                        ProfileAvatar(viewModel: viewModel, size: 42)
+                            .padding(.trailing, 4)
+                            .frame(height: 52)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Profilo")
@@ -519,7 +525,8 @@ private struct AmpfinTopBar: View {
                 .accessibilityLabel("Impostazioni")
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 8)
+            .padding(.leading, showsProfile ? 5 : 8)
+            .padding(.trailing, 8)
             .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
         }
         .padding(.horizontal, 20)
