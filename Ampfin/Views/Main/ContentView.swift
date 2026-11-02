@@ -407,7 +407,7 @@ private struct IOSToolbarModifier: ViewModifier {
         Image(systemName: systemImage)
             .font(.system(size: 19, weight: .medium))
             .foregroundStyle(.white)
-            .frame(width: 48, height: 44)
+            .frame(width: 42, height: 44)
             .contentShape(Rectangle())
     }
 
@@ -464,8 +464,9 @@ private struct IOSToolbarModifier: ViewModifier {
                         }
                         .accessibilityLabel("Impostazioni")
                     }
-                    .padding(.leading, showsProfile ? 4 : 6)
-                    .padding(.trailing, 6)
+                    .padding(.leading, showsProfile ? 4 : 1)
+                    // The gear's centre sits half the capsule's height from its end, like the picture's.
+                    .padding(.trailing, 1)
                     .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
                 }
                 .sharedBackgroundVisibility(.hidden)
@@ -525,8 +526,9 @@ private struct AmpfinTopBar: View {
                 .accessibilityLabel("Impostazioni")
             }
             .buttonStyle(.plain)
-            .padding(.leading, showsProfile ? 5 : 8)
-            .padding(.trailing, 8)
+            .padding(.leading, showsProfile ? 5 : 3)
+            // The gear's centre sits half the capsule's height from its end, like the picture's.
+            .padding(.trailing, 3)
             .glassEffect(.regular.tint(Color.accentColor.opacity(0.85)).interactive(), in: .capsule)
         }
         .padding(.horizontal, 20)
@@ -538,7 +540,7 @@ private struct AmpfinTopBar: View {
         Image(systemName: systemImage)
             .font(.system(size: 22, weight: .medium))
             .foregroundStyle(.white)
-            .frame(width: 54, height: 52)
+            .frame(width: 46, height: 52)
             .contentShape(Rectangle())
     }
 }
